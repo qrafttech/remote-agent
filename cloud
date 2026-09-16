@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+host=${CLOUD_HOST-vps}
+root=${AGENT_ROOT:-/opt/agent}
+usage() { echo "usage: cloud build | run <prompt | file> | pull | clean" >&2; exit 1; }
+slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-'; }
+locate() {
+  project=$1; branch=$2
+  dir=$root/projects/$project; name=$project-$(slug "$branch"); worktree=$dir/runs/$(slug "$branch")
+}
+compose() {
+  AGENT_ROOT=$root PROJECT_DIR=$dir \
+    docker compose --project-directory "$dir" -p "$name" $([ ! -f "$dir/stack.yml" ] || echo "-f $dir/stack.yml") -f "$dir/cloud.yml" "$@"
+}
+state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state:"missing")})' "$1" 2>/dev/null || echo error; }
+
+case "${1:-}" in
+  host-build)
+    docker build -q -t agent --build-arg "AGENT_UID=$(id -u)" - < "$root/Dockerfile" >/dev/null && echo "image agent built"
+    exit 0 ;;
+
+  host-check)
+    locate "$2" "$3"
+    install -d "$dir/runs" && git init -q --bare "$dir/repo.git"
+    [ "$4" = 1 ] || rm -f "$dir/stack.yml"
+    [ -f "$dir/env" ] || { echo "cloud: write $dir/env on the host first — the app's KEY=value configuration" >&2; exit 1; }
+    docker image inspect agent >/dev/null 2>&1 || { echo "cloud: no image — \`cloud build\` first" >&2; exit 1; }
+    [ -z "$(docker ps -aq -f "name=^$name$")" ] && [ ! -e "$worktree" ] || { echo "cloud: the host holds $name — \`cloud pull\` or \`cloud clean\` it first" >&2; exit 1; }
+    exit 0 ;;
+
+  host-start)
+    locate "$2" "$3"
+    compose run -d --quiet-pull --name "$name" agent cloud session "$project" "$branch" >/dev/null
+    exit 0 ;;
+
+  host-clean)
+    locate "$2" "$3"
+    [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" != true ] || { echo "cloud: the run is still going — stop it in the Claude app first" >&2; exit 3; }
+    [ ! -e "$worktree" ] || [ -z "$(git -C "$worktree" status --porcelain)" ] || { echo "cloud: $worktree holds uncommitted work — commit or discard it on the host first" >&2; exit 3; }
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    compose down -v --remove-orphans
+    [ ! -e "$worktree" ] || git -C "$dir/repo.git" worktree remove --force "$worktree"
+    git -C "$dir/repo.git" worktree prune
+    echo "host: $name, its services, volumes and worktree removed"
+    exit 0 ;;
+
+  session)
+    locate "$2" "$3"
+    git -C "$dir/repo.git" worktree add -q "$worktree" "run/$branch"
+    cd "$worktree"; input=$(git rev-parse HEAD)
+    node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
+    claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
+    finish() {
+      trap - EXIT TERM INT
+      if [ -n "${id:-}" ]; then
+        case $(state_of "$id") in working|blocked|error) claude stop "$id" >/dev/null || true ;; esac
+        claude rm "$id" >/dev/null || true
+      fi
+      git add -A
+      git diff --cached --quiet || git commit -qm "run: $branch"
+      if [ "$(git rev-parse HEAD)" != "$input" ]; then echo "run/$branch has the result"; else echo "no changes on $branch"; fi
+    }
+    trap finish EXIT
+    trap 'exit 143' TERM INT
+    id=$(claude --bg --name "$project/$branch" --remote-control "$project/$branch" --permission-mode auto "$(cat .claude/prompt.txt)" |
+         sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')
+    [ -n "$id" ] || { echo "no session id" >&2; exit 1; }
+    echo "session $id running"
+    strikes=0
+    while sleep "${POLL:-30}" & wait $!; do
+      state=$(state_of "$id")
+      case $state in
+        working|blocked) strikes=0 ;;
+        missing|error) [ $((strikes+=1)) -lt 3 ] || { echo "session $id is $state for claude agents --all, three times in a row" >&2; exit 1; } ;;
+        *) break ;;
+      esac
+    done
+    exit 0 ;;
+
+  host-*) usage ;;
+esac
+
+tooling=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+if [ -n "$host" ]; then
+  remote() { ssh "$host" "AGENT_ROOT=$root bash $root/cloud $(printf '%q ' "$@")"; }
+  target=$host:
+else
+  remote() { bash "$root/cloud" "$@"; }
+  target=
+fi
+case "${1:-}" in build|run|pull|clean) ;; *) usage ;; esac
+rsync -aq "$tooling/cloud" "$tooling/base.yml" "$tooling/Dockerfile" "$target$root/"
+[ "${1:-}" != build ] || { remote host-build; exit; }
+
+repo=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "cloud: not inside a git repository" >&2; exit 1; }
+overlay=$repo/cloud.yml
+[ -f "$overlay" ] || { echo "cloud: $overlay is missing — the agent service and this project's sidecars go there" >&2; exit 1; }
+arg=${2:-}
+[ -z "$arg" ] || [ ! -f "$arg" ] || rel=$(cd "$(dirname "$arg")" && git rev-parse --show-prefix)$(basename "$arg")
+cd "$repo"
+origin=$(git remote get-url origin 2>/dev/null) || { echo "cloud: no origin remote — the project is named after it" >&2; exit 1; }
+locate "$(slug "$(basename -s .git "$origin")")" "$(git branch --show-current)"
+url=$target$dir/repo.git
+run_out() { git rev-parse -q --verify "refs/cloud/$branch"; }
+clean_host() { remote host-clean "$project" "$branch" && status=0 || status=$?; [ "$status" != 3 ] || exit 1; }
+cleaned() { [ "$status" = 0 ] || { echo "cloud: host cleanup failed — \`cloud clean\` later" >&2; exit 1; }; }
+ship() {
+  remote host-check "$project" "$branch" "$([ -f docker-compose.yml ] && echo 1 || echo 0)"
+  rsync -aq "$overlay" "$target$dir/"
+  [ ! -f docker-compose.yml ] || rsync -aq docker-compose.yml "$target$dir/stack.yml"
+}
+snapshot() {
+  GIT_INDEX_FILE=$(mktemp); export GIT_INDEX_FILE
+  git read-tree HEAD && git add -A
+  [ ! -d .claude ] || git add -f -- .claude ':(exclude).claude/worktrees'
+  [ -z "${rel:-}" ] || git add -f -- "$rel"
+  local stack="Bring the stack up yourself"
+  [ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
+  local blob; blob=$(printf '%s\n' "This is a run of $project in its own container, and the app's configuration is in your environment." \
+    "$stack, from the repository's own instructions, inside this worktree; stop what you started before you finish." "" "$prompt" | git hash-object -w --stdin)
+  git update-index --add --cacheinfo "100644,$blob,.claude/prompt.txt"
+  git commit-tree "$(git write-tree)" -p HEAD -m "cloud: $branch"
+  rm -f "$GIT_INDEX_FILE"; unset GIT_INDEX_FILE
+}
+
+case "${1:-}" in
+  run)
+    [ -n "$arg" ] || usage
+    [ -n "$branch" ] || { echo "cloud: detached HEAD — switch to a branch first" >&2; exit 1; }
+    if [ "$branch" = main ]; then read -rp "branch? " branch; git switch -c "$branch"; locate "$project" "$branch"; fi
+    ! run_out >/dev/null || { echo "cloud: a run of $branch is out — \`cloud pull\` or \`cloud clean\` first" >&2; exit 1; }
+    ship
+    prompt=${rel:+Implement $rel}; prompt=${prompt:-$arg}
+    input=$(snapshot)
+    git push -q "$url" "$input:refs/heads/run/$branch"
+    git update-ref "refs/cloud/$branch" "$input"
+    remote host-start "$project" "$branch"
+    echo "running \"$prompt\" on $branch as $project/$branch"
+    echo "follow it in the Claude app (Code → $project/$branch); stop it there if needed; \`cloud pull\` when done"
+    ;;
+
+  pull)
+    input=$(run_out) || { echo "cloud: no run is out on $branch" >&2; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "cloud: commit or stash first:" >&2; git status --short >&2; exit 1; }
+    clean_host
+    git fetch -q "$url" "run/$branch"; result=$(git rev-parse FETCH_HEAD)
+    if [ "$result" = "$input" ]; then echo "run on $branch produced no changes"
+    else
+      [ "$(git rev-parse "$input^")" = "$(git rev-parse HEAD)" ] || echo "note: $branch moved since the run — applying three-way"
+      git diff --binary "$input" "$result" -- . ':!.claude' | git apply -3 --allow-empty
+      git status --short
+      echo "staged onto $branch, uncommitted → commit it or stack-this"
+    fi
+    cleaned
+    git push -q "$url" --delete "run/$branch"
+    git update-ref -d "refs/cloud/$branch"
+    ;;
+
+  clean)
+    clean_host; cleaned
+    git push -q "$url" --delete "run/$branch" 2>/dev/null || true
+    git update-ref -d "refs/cloud/$branch"
+    ;;
+
+  *) usage ;;
+esac
