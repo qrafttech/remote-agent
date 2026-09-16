@@ -33,7 +33,7 @@ On the host, one user, `agent`, uid 1000 (what the image's user is), in the `doc
 
 ```
 /opt/agent/
-├─ home/      the agent's $HOME, shared by every run: the login, plus settings.json, rules/ and skills/ mirrored from the client
+├─ home/      the agent's $HOME, set by the workflow since the runner would set /github/home; shared by every run: the login, plus settings.json, rules/ and skills/ mirrored from the client
 └─ seed/      the client's plugins, marketplaces and cache, mounted read-only as CLAUDE_CODE_PLUGIN_SEED_DIR
 ~/runner-<repo>-<n>/   one GitHub Actions runner, a systemd service; one per concurrent run, per repository
 ```
@@ -155,9 +155,8 @@ Has: the image, `home/` with the login, the mirrored settings, rules and skills,
 
 ## 9. Not verified yet on a real host
 
-The stubs prove `session`; the rest waits for the first runner. In the order it would break:
+The stubs prove `session`, and a first job proved the container's user: the checkout, written by the runner's uid 1000, is writable by the image's, and `HOME` must be set in `container.env` because the runner sets it to `/github/home`. The rest, in the order it would break:
 
-- **The container job's user.** The runner starts the container from the image's `USER agent`, uid 1000, and `actions/checkout` writes into `$GITHUB_WORKSPACE`, a directory the runner created as its own user; §2 aligns them at uid 1000. If the first job says `Permission denied` on the workspace, or `claude` cannot read `/home/agent/.claude/.credentials.json`, the fix is `container.options: --user <uid of agent on the host>` plus `HOME: /home/agent` under `container.env`.
 - **Remote Control from inside a job container**: `claude --bg --remote-control` under `docker exec`, with no TTY, and the session listed under **Code** in the app. Same command as before, different parent process.
 - **The plugin seed at runtime**: `CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/seed` read-only, `enabledPlugins` from the mirrored `settings.json`.
 - **A cancelled job**: whether the runner delivers SIGTERM to `session` inside the container (the trap stops the Claude session) or only severs `docker exec` (the session dies with the container after the last step). Either way the last step commits and pushes.
