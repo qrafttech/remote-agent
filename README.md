@@ -1,6 +1,6 @@
 # Remote agent host
 
-A machine with Docker runs Claude Code sessions unattended: any skill, any prompt, any project, several at a time. The trigger is a GitHub Actions workflow: a client dispatches it with a branch and a prompt; a self-hosted runner on the host runs the job in a container from this repository's image; when the session ends, the job pushes the branch to GitHub and opens a draft pull request. The client is anything that can call GitHub: `gh` on a laptop, the Actions tab, another workflow, a bot; nothing of the result travels back through it. The container is the boundary: it has no key during the session, no Docker socket, no sudo and no published port, so the host can keep serving other things and nothing here touches them.
+A machine with Docker runs Claude Code sessions unattended: any skill, any prompt, any project, several at a time. The trigger is a GitHub Actions workflow: a client dispatches it with a branch and a prompt; a self-hosted runner on the host runs the job in a container from this repository's image; when the session ends, the job pushes the branch to GitHub and opens a draft pull request. The client is anything that can call GitHub: `gh` on a laptop, the Actions tab, another workflow, a bot; nothing of the result travels back through it. The container is the boundary: it has no key during the session, no sudo and no published port, so the host can keep serving other things and nothing here touches them. One hole, the runner's: it mounts the host's Docker socket into every job container (§8).
 
 ![Architecture: triggers, GitHub, the VPS with two runners, and the Claude app](docs/architecture.svg)
 
@@ -33,7 +33,7 @@ On the host, one user, `agent`, uid 1000 (what the image's user is), in the `doc
 
 ```
 /opt/agent/
-├─ home/      the agent's $HOME, set by the workflow since the runner would set /github/home; shared by every run: the login, plus settings.json, rules/ and skills/ mirrored from the client
+├─ home/      the agent's $HOME, set on the session step since the runner sets /github/home on the container; shared by every run: the login, plus settings.json, rules/ and skills/ mirrored from the client
 └─ seed/      the client's plugins, marketplaces and cache, mounted read-only as CLAUDE_CODE_PLUGIN_SEED_DIR
 ~/runner-<repo>-<n>/   one GitHub Actions runner, a systemd service; one per concurrent run, per repository
 ```
@@ -151,11 +151,11 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 ## 8. What the container has and what it never has
 
-Has: the image, `home/` with the login, the mirrored settings, rules and skills, the plugin seed read-only, the checkout of one branch of one repository, the sidecars on the job's network, the app's configuration in the environment, outbound network. During the session it has no token: the checkout keeps none, and the job's token reaches the container only in the last step, after the session is gone. Never has: a way to push anywhere during the session, another repository, the Docker socket, sudo, a published port, a real credential, the client's `~/.claude.json` session state.
+Has: the image, `home/` with the login, the mirrored settings, rules and skills, the plugin seed read-only, the checkout of one branch of one repository, the sidecars on the job's network, the app's configuration in the environment, outbound network. During the session it has no token: the checkout keeps none, and the job's token reaches the container only in the last step, after the session is gone. Never has: a way to push anywhere during the session, another repository, sudo, a published port, a real credential, the client's `~/.claude.json` session state. Has, and should not: the host's Docker socket at `/var/run/docker.sock`, which the runner mounts into every job container, unconditionally; the image carries no Docker client, but a session that talked to the socket would be root on the host. This is the one place the container is not the boundary.
 
 ## 9. Not verified yet on a real host
 
-The stubs prove `session`, and a first job proved the container's user: the checkout, written by the runner's uid 1000, is writable by the image's, and `HOME` must be set in `container.env` because the runner sets it to `/github/home`. The rest, in the order it would break:
+The stubs prove `session`, and a first job proved the container's user: the checkout, written by the runner's uid 1000, is writable by the image's, and `HOME` must be set on the `session` step, because the runner writes `/github/home` over `container.env` at `docker create` and a step's `env` is what its `docker exec` gets. The rest, in the order it would break:
 
 - **Remote Control from inside a job container**: `claude --bg --remote-control` under `docker exec`, with no TTY, and the session listed under **Code** in the app. Same command as before, different parent process.
 - **The plugin seed at runtime**: `CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/seed` read-only, `enabledPlugins` from the mirrored `settings.json`.

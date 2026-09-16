@@ -24,7 +24,6 @@ jobs:
         - /opt/agent/home:/home/agent
         - /opt/agent/seed:/opt/seed:ro
       env:
-        HOME: /home/agent
         CLAUDE_CODE_PLUGIN_SEED_DIR: /opt/seed
     # The project's sidecars: each service of docker-compose.yml, under the same name, with its healthcheck; no ports.
     services:
@@ -44,6 +43,7 @@ jobs:
         with:
           persist-credentials: false
       - env:
+          HOME: /home/agent
           PROMPT: ${{ inputs.prompt }}
         run: session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
       - if: always()

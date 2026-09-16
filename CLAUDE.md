@@ -13,7 +13,7 @@ The template as is, with two blocks edited:
 - `services:`: one entry per service of `docker-compose.yml`, under the same name, with the same image and environment, its healthcheck as `options: --health-cmd …`, and no `ports`. Nothing in a run is published; several runs share the host.
 - `env:` of the job: the keys of the project's `.env.example` files, each sidecar at its service name (`postgres:5432`, not `localhost`), the app's own servers at `localhost`. Dev values are written in the file, as CI writes them; a value that must not be in the tree is a repository secret, `gh secret set NAME`, read as `${{ secrets.NAME }}`. Dev credentials only: nothing that reaches a real bucket, a real database or a real mailbox.
 
-Everything else stays: the `container:` block (image, the two mounts, the home, the seed), `permissions`, `concurrency`, `timeout-minutes`, the checkout without credentials, the `session` step, the last step. A project without `docker-compose.yml` deletes `services:` and gets a prompt that says to bring the whole stack up.
+Everything else stays: the `container:` block (image, the two mounts, the seed), `permissions`, `concurrency`, `timeout-minutes`, the checkout without credentials, the `session` step with its `HOME`, the last step. A project without `docker-compose.yml` deletes `services:` and gets a prompt that says to bring the whole stack up.
 
 ### What the run reads from the project
 
