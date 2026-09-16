@@ -37,7 +37,7 @@
   <rect class="box" x="508" y="40" width="108" height="20" rx="10"/><text class="s" x="562" y="53.5" text-anchor="middle">issue comment</text>
   <path class="ln" d="M78,60 V66 H562 V60 M199,60 V66 M320,60 V66 M441,60 V66"/>
   <rect class="box" x="24" y="70" width="592" height="28" rx="4"/>
-  <text class="m" x="36" y="88">gh workflow run cloud --ref feat/x -f prompt="…"</text>
+  <text class="m" x="36" y="88">gh workflow run cloud --ref feat/x -f prompt="…" <tspan class="a">= cloud feat/x "…"</tspan></text>
   <text class="s" x="604" y="88" text-anchor="end">workflow dispatch</text>
   <text class="s" x="270" y="131">dispatches cloud.yml</text>
 
