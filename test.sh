@@ -20,9 +20,11 @@ if [ "${1:-}" = image ]; then
 fi
 
 T=$(cd "${TMPDIR:-/tmp}" && pwd -P)/cloud-test.$$; trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/stubs" "$T/agent" "$T/home/.claude"
+mkdir -p "$T/stubs" "$T/agent/home/.claude" "$T/home/.claude" "$T/mac-claude/skills/s" "$T/mac-claude/plugins/cache/m/p/1" "$T/mac-claude/plugins/marketplaces/m" "$T/mac-claude/plugins/repos"
+echo '{"a":1}' > "$T/mac-claude/settings.json"; echo s > "$T/mac-claude/skills/s/SKILL.md"; echo m > "$T/mac-claude/plugins/known_marketplaces.json"; echo p > "$T/mac-claude/plugins/cache/m/p/1/plugin.json"; echo r > "$T/mac-claude/plugins/repos/r"
+echo cred > "$T/agent/home/.claude/.credentials.json"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t LC_ALL=C
-export CLOUD_HOST= AGENT_ROOT=$T/agent STUBS=$T/stubs STUBLOG=$T/stub.log
+export CLOUD_HOST= AGENT_ROOT=$T/agent CLAUDE_CONFIG_DIR=$T/mac-claude STUBS=$T/stubs STUBLOG=$T/stub.log
 cat > "$STUBS/docker" <<'EOF2'
 #!/usr/bin/env bash
 echo "docker $*" >> "$STUBLOG"
@@ -53,7 +55,7 @@ cd "$T" && git init -q mac && cd mac && git switch -q -c main
 git remote add origin git@github.com:someone/Mac.git
 printf '.claude/\n.env\n' > .gitignore; echo one > f.txt
 printf 'services:\n  postgres:\n    image: postgres:17\n' > docker-compose.yml
-printf 'services:\n  agent:\n    extends: { file: ${AGENT_ROOT}/base.yml, service: agent }\n    env_file: env\n  postgres:\n    ports: !reset []\n' > cloud.yml
+printf 'services:\n  agent:\n    extends: { file: ${AGENT_ROOT}/agent.yml, service: agent }\n    env_file: env\n  postgres:\n    ports: !reset []\n' > cloud.yml
 git add -A; git commit -qm init
 proj=$AGENT_ROOT/projects/mac
 cloud() { bash "$here/cloud" "$@"; }
@@ -72,10 +74,13 @@ input=$(git rev-parse refs/cloud/feat/x)
 check "run: the branch is untouched and the tree still dirty" '[ "$(git rev-parse HEAD)" = "$head" ] && [ -n "$(git status --porcelain)" ]'
 check "run: run/feat/x in the host's bare repo is the input commit, with the edit, the file, .claude/ and the prompt" '[ "$(git -C "$proj/repo.git" rev-parse run/feat/x)" = "$input" ] && git ls-tree -r --name-only "$input" | grep -qx apps/plan.md && git ls-tree -r --name-only "$input" | grep -qx .claude/deliverable.md && git show "$input:f.txt" | grep -qx edit'
 check "run: prompt names the project, the compose services and the file" 'git show "$input:.claude/prompt.txt" | head -1 | grep -q "^This is a run of mac in its own container" && git show "$input:.claude/prompt.txt" | grep -q "docker-compose.yml declares are already up" && git show "$input:.claude/prompt.txt" | tail -1 | grep -qx "Implement apps/plan.md"'
-check "run: tooling, overlay and stack shipped to the host" 'cmp -s "$here/cloud" "$AGENT_ROOT/cloud" && cmp -s "$here/base.yml" "$AGENT_ROOT/base.yml" && cmp -s cloud.yml "$proj/cloud.yml" && cmp -s docker-compose.yml "$proj/stack.yml"'
+check "run: tooling, overlay and stack shipped to the host" 'cmp -s "$here/cloud" "$AGENT_ROOT/cloud" && cmp -s "$here/agent.yml" "$AGENT_ROOT/agent.yml" && cmp -s "$here/Dockerfile" "$AGENT_ROOT/Dockerfile" && cmp -s cloud.yml "$proj/cloud.yml" && cmp -s docker-compose.yml "$proj/stack.yml"'
+check "run: settings, skills and the plugin seed shipped, the rest of home untouched" '[ "$(cat "$AGENT_ROOT/home/.claude/settings.json")" = "{\"a\":1}" ] && [ -f "$AGENT_ROOT/home/.claude/skills/s/SKILL.md" ] && [ -f "$AGENT_ROOT/seed/known_marketplaces.json" ] && [ -f "$AGENT_ROOT/seed/cache/m/p/1/plugin.json" ] && [ -d "$AGENT_ROOT/seed/marketplaces/m" ] && [ ! -e "$AGENT_ROOT/seed/repos" ] && [ -f "$AGENT_ROOT/home/.claude/.credentials.json" ]'
+rm -r "$T/mac-claude/skills/s"; o=$(out cloud run again)
+check "run: a skill removed on the Mac leaves the host" '[ ! -e "$AGENT_ROOT/home/.claude/skills/s" ]'
 check "run: one compose project per run, started detached with the session command" 'grep -q "^docker compose --project-directory $proj -p mac-feat-x -f $proj/stack.yml -f $proj/cloud.yml run -d --quiet-pull --name mac-feat-x agent cloud session mac feat/x$" "$STUBLOG"'
 
-o=$(out cloud run again); check "run twice: refused" 'grep -q "is out" <<<"$o"'
+check "run twice: refused" 'grep -q "is out" <<<"$o"'
 git stash -q -u; git switch -q -c feat/y; touch "$AGENT_ROOT/container"
 o=$(out cloud run second); check "run while the host holds this branch: refused" 'grep -q "holds mac-feat-y" <<<"$o" && ! git rev-parse -q --verify refs/cloud/feat/y >/dev/null'
 rm "$AGENT_ROOT/container"; git switch -q feat/x; git branch -qD feat/y; git stash pop -q

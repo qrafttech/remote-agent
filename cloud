@@ -1,25 +1,58 @@
 #!/usr/bin/env bash
+# cloud: run a Claude Code session on a Docker host from the current branch.
+#
+# Mac verbs, run inside a project checkout. Every one first ships this tooling
+# and the Mac's Claude setup (settings.json, rules, skills, plugins) to the host.
+#   build              build the image `agent` on the host from the Dockerfile
+#   run <prompt|file>  snapshot the working tree into one commit, push it to the
+#                      host's bare repository as run/<branch>, start one Compose
+#                      project: the project's sidecars plus the agent container
+#   pull               once the run ended: clean the host, fetch run/<branch>,
+#                      stage its delta on the branch, uncommitted
+#   clean              the same cleanup without the fetch, for an abandoned run
+#
+# Host verbs, called by the Mac over SSH (or locally when CLOUD_HOST is empty).
+#   host-build         docker build
+#   host-check         refuse what the host cannot take: no env, no image, a
+#                      container or worktree still holding this branch
+#   host-start         docker compose run -d ... cloud session
+#   host-clean         remove the container, the Compose project, the worktree
+#
+# Container verb, the agent container's command.
+#   session            cut the worktree on run/<branch>, launch claude --bg with
+#                      Remote Control, wait for it to end, commit what it left
+#
+# On the host, $AGENT_ROOT (default /opt/agent) holds this file, agent.yml, the
+# Dockerfile, home/ (the agent's $HOME: login, settings, rules, skills), seed/
+# (the plugins, read-only) and projects/<project>/ (env, cloud.yml, stack.yml,
+# repo.git, runs/<branch-slug>/).
 set -euo pipefail
 
 host=${CLOUD_HOST-vps}
 root=${AGENT_ROOT:-/opt/agent}
 usage() { echo "usage: cloud build | run <prompt | file> | pull | clean" >&2; exit 1; }
+# A branch or repository name as one path-safe word: feat/x -> feat-x.
 slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-'; }
+# Sets dir, name and worktree for one project and branch.
 locate() {
   project=$1; branch=$2
   dir=$root/projects/$project; name=$project-$(slug "$branch"); worktree=$dir/runs/$(slug "$branch")
 }
+# docker compose for one run: the project's stack.yml when it has one, then its cloud.yml.
 compose() {
   AGENT_ROOT=$root PROJECT_DIR=$dir \
     docker compose --project-directory "$dir" -p "$name" $([ ! -f "$dir/stack.yml" ] || echo "-f $dir/stack.yml") -f "$dir/cloud.yml" "$@"
 }
+# The session's state per `claude agents`: working, blocked, done..., missing, or error when the listing fails.
 state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state:"missing")})' "$1" 2>/dev/null || echo error; }
 
 case "${1:-}" in
+  # docker build on the host, the agent user with the caller's uid so the host owns what runs write.
   host-build)
     docker build -q -t agent --build-arg "AGENT_UID=$(id -u)" - < "$root/Dockerfile" >/dev/null && echo "image agent built"
     exit 0 ;;
 
+  # Everything a run needs on the host, or the reason it cannot start. Also creates the bare repository.
   host-check)
     locate "$2" "$3"
     install -d "$dir/runs" && git init -q --bare "$dir/repo.git"
@@ -29,11 +62,13 @@ case "${1:-}" in
     [ -z "$(docker ps -aq -f "name=^$name$")" ] && [ ! -e "$worktree" ] || { echo "cloud: the host holds $name — \`cloud pull\` or \`cloud clean\` it first" >&2; exit 1; }
     exit 0 ;;
 
+  # One detached Compose project per run; its agent container runs `cloud session`.
   host-start)
     locate "$2" "$3"
     compose run -d --quiet-pull --name "$name" agent cloud session "$project" "$branch" >/dev/null
     exit 0 ;;
 
+  # Removes a finished run. Exit 3 means refused with everything kept: still running, or uncommitted work.
   host-clean)
     locate "$2" "$3"
     [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" != true ] || { echo "cloud: the run is still going — stop it in the Claude app first" >&2; exit 3; }
@@ -45,6 +80,7 @@ case "${1:-}" in
     echo "host: $name, its services, volumes and worktree removed"
     exit 0 ;;
 
+  # Inside the container. On any exit, including SIGTERM from docker stop, the session is stopped and the tree committed.
   session)
     locate "$2" "$3"
     git -C "$dir/repo.git" worktree add -q "$worktree" "run/$branch"
@@ -81,7 +117,9 @@ case "${1:-}" in
   host-*) usage ;;
 esac
 
+# Mac side from here. remote runs a host verb; target prefixes rsync destinations.
 tooling=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+claude_home=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 if [ -n "$host" ]; then
   remote() { ssh "$host" "AGENT_ROOT=$root bash $root/cloud $(printf '%q ' "$@")"; }
   target=$host:
@@ -90,7 +128,10 @@ else
   target=
 fi
 case "${1:-}" in build|run|pull|clean) ;; *) usage ;; esac
-rsync -aq "$tooling/cloud" "$tooling/base.yml" "$tooling/Dockerfile" "$target$root/"
+# Ship the tooling and the Mac's Claude setup. The include filters mirror those entries and leave the rest of home/.claude alone: the login stays.
+rsync -aq "$tooling/cloud" "$tooling/agent.yml" "$tooling/Dockerfile" "$target$root/"
+rsync -aq --delete --include=settings.json --include='/rules/***' --include='/skills/***' --exclude='*' "$claude_home/" "$target$root/home/.claude/"
+rsync -aq --delete --include=known_marketplaces.json --include='/marketplaces/***' --include='/cache/***' --exclude='*' "$claude_home/plugins/" "$target$root/seed/"
 [ "${1:-}" != build ] || { remote host-build; exit; }
 
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "cloud: not inside a git repository" >&2; exit 1; }
@@ -102,14 +143,17 @@ cd "$repo"
 origin=$(git remote get-url origin 2>/dev/null) || { echo "cloud: no origin remote — the project is named after it" >&2; exit 1; }
 locate "$(slug "$(basename -s .git "$origin")")" "$(git branch --show-current)"
 url=$target$dir/repo.git
+# The input commit of the run out on this branch, if any.
 run_out() { git rev-parse -q --verify "refs/cloud/$branch"; }
 clean_host() { remote host-clean "$project" "$branch" && status=0 || status=$?; [ "$status" != 3 ] || exit 1; }
 cleaned() { [ "$status" = 0 ] || { echo "cloud: host cleanup failed — \`cloud clean\` later" >&2; exit 1; }; }
+# The project's overlay and stack to the host, after the host agreed to the run.
 ship() {
   remote host-check "$project" "$branch" "$([ -f docker-compose.yml ] && echo 1 || echo 0)"
   rsync -aq "$overlay" "$target$dir/"
   [ ! -f docker-compose.yml ] || rsync -aq docker-compose.yml "$target$dir/stack.yml"
 }
+# One commit from the working tree as it stands, through a throwaway index: the branch and its index stay untouched.
 snapshot() {
   GIT_INDEX_FILE=$(mktemp); export GIT_INDEX_FILE
   git read-tree HEAD && git add -A

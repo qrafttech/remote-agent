@@ -8,13 +8,13 @@ One file, `cloud.yml` at the project's root, plus one `env` file typed on the ho
 
 ### `cloud.yml`
 
-The Compose overlay of one run. It declares the `agent` service by extending `base.yml`, and resets the published ports of every sidecar. `cloud run` refuses a project without it.
+The Compose overlay of one run. It declares the `agent` service by extending `agent.yml`, and resets the published ports of every sidecar. `cloud run` refuses a project without it.
 
 ```yaml
 services:
   agent:
     extends:
-      file: ${AGENT_ROOT}/base.yml
+      file: ${AGENT_ROOT}/agent.yml
       service: agent
     env_file: env
     depends_on:
@@ -47,4 +47,4 @@ Rules:
 - One script, `cloud`, both sides: the Mac verbs and the `host-*` and `session` verbs, dispatched on `$1`. A behaviour goes in the verb that owns it, not in a new file.
 - `test.sh` is the specification. A behaviour change adds or changes a `check` line first; the stubs (`docker`, `claude`, `ssh`) grow only what a check needs. `bash test.sh` must pass before a push; `bash test.sh image` after any change to the `Dockerfile`.
 - `README.md` names every verb, refusal and message the code has. A change to one is a change to both.
-- No explanatory comments in the code. What needs saying goes in the README, or in a name.
+- `cloud` carries one header describing every verb and the host layout, and one line above each verb and helper saying what it is for. No other comments: what a line does is said by the line, and what a reader would get wrong goes in the README.
