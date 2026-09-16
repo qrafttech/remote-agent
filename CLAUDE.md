@@ -1,6 +1,6 @@
 ## What this is
 
-`cloud` runs a Claude Code session on a Docker host from the current branch of any project. `README.md` is the runbook: install, login, a run, the return. This file is what a project must bring to be run here, and the rules of this repository.
+`cloud` runs a Claude Code session on a Docker host from the current branch of any project, and the host brings the result back as a draft pull request. `README.md` is the runbook: install, login, a run, the end. This file is what a project must bring to be run here, and the rules of this repository.
 
 ## What a project brings
 
@@ -38,13 +38,14 @@ Rules:
 
 ### What the run reads from the project
 
+- The branch as committed: `cloud run` refuses a dirty tree, and the result comes back as commits on that branch, pushed to origin with a draft pull request.
 - The prompt, or a file: `cloud run "…"` or `cloud run path/to/plan.md`.
 - `.claude/` in full except `worktrees/`, tracked or ignored: briefs, plans, skills, settings. It travels one way; what the run writes there does not come back.
-- The working tree as it stands, tracked and untracked, without touching the branch or its index.
+- On the host, `gh` logged in with a token that may push branches and open pull requests on the project's origin; `main` protected there.
 
 ## Rules of this repository
 
-- One script, `cloud`, both sides: the Mac verbs and the `host-*` and `session` verbs, dispatched on `$1`. A behaviour goes in the verb that owns it, not in a new file.
-- `test.sh` is the specification. A behaviour change adds or changes a `check` line first; the stubs (`docker`, `claude`, `ssh`) grow only what a check needs. `bash test.sh` must pass before a push; `bash test.sh image` after any change to the `Dockerfile`.
+- One script, `cloud`, three sides: the client verbs, the `host-*` verbs and the `session` verb, dispatched on `$1`. A behaviour goes in the verb that owns it, not in a new file. The client is any machine with git, ssh and rsync; nothing in the client verbs may assume a person is there, so a GitHub Action can run them.
+- `test.sh` is the specification. A behaviour change adds or changes a `check` line first; the stubs (`docker`, `claude`, `gh`, `ssh`) grow only what a check needs. `bash test.sh` must pass before a push; `bash test.sh image` after any change to the `Dockerfile`.
 - `README.md` names every verb, refusal and message the code has. A change to one is a change to both.
-- `cloud` carries one header describing every verb and the host layout, and one line above each verb and helper saying what it is for. No other comments: what a line does is said by the line, and what a reader would get wrong goes in the README.
+- `cloud` carries a short header (what it is, the host layout) and a comment above each verb and helper saying what it is for and what it must not do. No other comments: what a line does is said by the line, and what a reader would get wrong goes in the README.
