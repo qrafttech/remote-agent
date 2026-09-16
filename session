@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # session <name> <prompt>: the one step of a run, inside the job's container, in
 # the checkout. Turn the sandbox off (the container is the boundary; on Linux the
-# sandbox would put every command in its own network namespace), register the
+# sandbox would put every command in its own network namespace), drop the client's
+# hooks and status line (commands of the client, absent here), register the
 # chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
 # until the session is neither working nor blocked. On any exit, SIGTERM
 # included, the session is stopped and removed; committing what it left is the
@@ -20,7 +21,7 @@ finish() {
   }
 }
 
-node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};delete s.hooks;delete s.statusLine;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
 claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
 trap finish EXIT
 trap 'exit 143' TERM INT

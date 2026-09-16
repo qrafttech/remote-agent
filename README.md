@@ -17,7 +17,7 @@ In the order you will do it:
 | File | Does |
 | :- | :- |
 | `Dockerfile` | the image: Node, pnpm, Chromium, `gh`, a pinned Claude Code and chrome-devtools MCP, the `session` script, an unprivileged user, git identity and ignore |
-| `session` | the one step of a run, inside the container: sandbox off, the MCP registered, `claude --bg --remote-control` on the checkout, polled until it ends |
+| `session` | the one step of a run, inside the container: sandbox off, the client's hooks and status line dropped, the MCP registered, `claude --bg --remote-control` on the checkout, polled until it ends |
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: the container, the sidecars, the configuration, the session, the push and the pull request |
 | `.github/workflows/image.yml` | builds the image on every push to `main`, runs `test.sh`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds the image and checks the pins |
@@ -82,7 +82,7 @@ The image comes from GHCR, pulled by the runner at every job: `image.yml` in thi
 ## 3. What only hands can do
 
 1. **Login**, once per host: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude'`, `/login`, copy the URL to a browser, paste the code back. The credentials land in `home/.claude/.credentials.json`, `-rw-------`, and stay there. Never copy this file anywhere. Keep `ANTHROPIC_API_KEY` unset: Remote Control needs the subscription.
-2. **Your Claude setup**, once, and again when it changes: `settings.json`, `rules/` and `skills/` into `home/.claude/`, the plugins (`known_marketplaces.json`, `marketplaces/`, `cache/`) into `seed/`. Which plugins are on comes from `enabledPlugins` in that `settings.json`. Nothing else under `home/.claude/` is touched, the login in particular. The first sync carries the plugin caches, tens of megabytes; later ones carry the difference.
+2. **Your Claude setup**, once, and again when it changes: `settings.json`, `rules/` and `skills/` into `home/.claude/`, the plugins (`known_marketplaces.json`, `marketplaces/`, `cache/`) into `seed/`. Which plugins are on comes from `enabledPlugins` in that `settings.json`. Nothing else under `home/.claude/` is touched, the login in particular. The first sync carries the plugin caches, tens of megabytes; later ones carry the difference. A changed skill, rule, setting or plugin reaches the host by running the same two lines again; the copy is never edited by hand, because every session start adapts it (§7).
    ```bash
    rsync -a --delete --include=settings.json --include='/rules/***' --include='/skills/***' --exclude='*' ~/.claude/ agent@vps:/opt/agent/home/.claude/
    rsync -a --delete --include=known_marketplaces.json --include='/marketplaces/***' --include='/cache/***' --exclude='*' ~/.claude/plugins/ agent@vps:/opt/agent/seed/
@@ -146,7 +146,7 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 - **Claude Code, pnpm, the MCP, `gh`, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image` on the client, push to `main`: `image.yml` rebuilds and pushes the image, and the next job pulls it. Then one probe run on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugin seed and the workspace trust on the real host. `session` reads `backgrounded · <id>` and the `working`/`blocked` states from the CLI; a session that never appears in `claude agents --all`, or a listing that stops parsing, ends the step with an error after three polls, so a changed CLI fails loudly rather than reporting no changes.
 - **The runners**: they update themselves. `./config.sh remove --token <token>` in the runner's directory unregisters one.
-- **Your Claude setup**: the two `rsync` lines of §3.2. Every session start also turns the sandbox off in the mirrored `settings.json` and registers the chrome-devtools MCP with the image's Chromium, whatever the copy says.
+- **Your Claude setup**: the two `rsync` lines of §3.2. Every session start also adapts the mirrored `settings.json`, whatever the copy says: the sandbox off, `hooks` and `statusLine` dropped since they name commands of the client, and the chrome-devtools MCP registered with the image's Chromium. Everything else in it applies as on the client, `permissions.ask` included: a rule that prompts on the client prompts in the app.
 - **Rotate the login**: `/logout` then `/login` in §3.1, twice a year, and after any doubt about the box.
 
 ## 8. What the container has and what it never has

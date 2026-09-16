@@ -22,7 +22,7 @@ fi
 
 T=$(cd "${TMPDIR:-/tmp}" && pwd -P)/session-test.$$; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/stubs" "$T/home/.claude" "$T/repo"
-echo '{"a":1}' > "$T/home/.claude/settings.json"
+echo '{"a":1,"hooks":{"Stop":[]},"statusLine":{"type":"command","command":"x"}}' > "$T/home/.claude/settings.json"
 export HOME=$T/home STUBS=$T/stubs STUBLOG=$T/stub.log POLL=0.1 LC_ALL=C
 cat > "$STUBS/claude" <<'EOF2'
 #!/usr/bin/env bash
@@ -40,7 +40,7 @@ session() { CLAUDE_AGENTS=${CLAUDE_AGENTS:-'[{"id":"abc123","state":"done"}]'} b
 
 : > "$STUBLOG"; printf 'services:\n  postgres:\n    image: postgres:17\n' > docker-compose.yml
 o=$(session app/feat/x "Implement plan.md"); status=$?
-check "sandbox off in the mounted settings, the rest kept" 'node -e "const s=require(\"$HOME/.claude/settings.json\");process.exit(s.sandbox.enabled===false&&s.a===1?0:1)"'
+check "sandbox off, hooks and status line dropped in the mounted settings, the rest kept" 'node -e "const s=require(\"$HOME/.claude/settings.json\");process.exit(s.sandbox.enabled===false&&!(\"hooks\" in s)&&!(\"statusLine\" in s)&&s.a===1?0:1)"'
 check "chrome-devtools registered with the image's chromium" 'grep -q "^claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium$" "$STUBLOG"'
 check "launched in the background, named and remote-controlled as <repo>/<branch>, permissions auto" 'grep -q "^claude --bg --name app/feat/x --remote-control app/feat/x --permission-mode auto " "$STUBLOG"'
 check "the prompt says container, sidecars up, commit as you go, then the user's prompt" 'head -1 "$T/claude.prompt" | grep -q "^This is a run of app in its own container" && grep -q "docker-compose.yml declares are already up" "$T/claude.prompt" && grep -q "do not push" "$T/claude.prompt" && tail -1 "$T/claude.prompt" | grep -qx "Implement plan.md"'
