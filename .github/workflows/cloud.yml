@@ -1,0 +1,46 @@
+name: cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: What the session does
+        required: true
+        type: string
+
+concurrency: cloud-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: self-hosted
+    timeout-minutes: 1380
+    container:
+      image: ghcr.io/qrafttech/agent
+      volumes:
+        - /opt/agent/home:/home/agent
+        - /opt/agent/seed:/opt/seed:ro
+      env:
+        CLAUDE_CODE_PLUGIN_SEED_DIR: /opt/seed
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          HOME: /home/agent
+          PROMPT: ${{ inputs.prompt }}
+        run: session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
+      - if: always()
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -qm "run: $GITHUB_REF_NAME"
+          [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || { echo "no changes on $GITHUB_REF_NAME"; exit 0; }
+          git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
+          gh pr list --head "$GITHUB_REF_NAME" --json url -q '.[].url' | grep . ||
+            gh pr create --draft --head "$GITHUB_REF_NAME" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"
