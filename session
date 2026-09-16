@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# session <name> <prompt>: the one step of a run, inside the job's container, in
+# the checkout. Turn the sandbox off (the container is the boundary; on Linux the
+# sandbox would put every command in its own network namespace), register the
+# chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
+# until the session is neither working nor blocked. On any exit, SIGTERM
+# included, the session is stopped and removed; committing what it left is the
+# workflow's job.
+set -euo pipefail
+[ $# = 2 ] || { echo "usage: session <name> <prompt>" >&2; exit 1; }
+name=$1
+# The session's state per `claude agents`: working, blocked, done..., missing, or error when the listing fails.
+state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state:"missing")})' "$1" 2>/dev/null || echo error; }
+# Stop the session if it is still going, then forget it, whatever ends this script.
+finish() {
+  trap - EXIT TERM INT
+  [ -z "${id:-}" ] || {
+    case $(state_of "$id") in working|blocked|error) claude stop "$id" >/dev/null || true ;; esac
+    claude rm "$id" >/dev/null || true
+  }
+}
+
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
+claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
+trap finish EXIT
+trap 'exit 143' TERM INT
+stack="Bring the stack up yourself"
+[ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
+prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \
+  "$stack, from the repository's own instructions, inside this checkout; stop what you started before you finish." \
+  "Commit your work on this branch as you go, with real messages; do not push, the workflow does." "" "$2")
+id=$(claude --bg --name "$name" --remote-control "$name" --permission-mode auto "$prompt" |
+     sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')
+[ -n "$id" ] || { echo "no session id" >&2; exit 1; }
+echo "session $id running as $name"
+strikes=0
+while sleep "${POLL:-30}" & wait $!; do
+  state=$(state_of "$id")
+  case $state in
+    working|blocked) strikes=0 ;;
+    missing|error) [ $((strikes+=1)) -lt 3 ] || { echo "session $id is $state for claude agents --all, three times in a row" >&2; exit 1; } ;;
+    *) echo "session $id $state"; break ;;
+  esac
+done
