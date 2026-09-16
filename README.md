@@ -2,6 +2,18 @@
 
 A machine with Docker runs Claude Code sessions unattended: any skill, any prompt, any project, several at a time. The trigger is a GitHub Actions workflow: a client dispatches it with a branch and a prompt; a self-hosted runner on the host runs the job in a container from this repository's image; when the session ends, the job pushes the branch to GitHub and opens a draft pull request. The client is anything that can call GitHub: `gh` on a laptop, the Actions tab, another workflow, a bot; nothing of the result travels back through it. The container is the boundary: it has no key during the session, no Docker socket, no sudo and no published port, so the host can keep serving other things and nothing here touches them.
 
+![Architecture: triggers, GitHub, the VPS with two runners, and the Claude app](docs/architecture.svg)
+
+Any trigger with `gh` (a laptop, the Actions tab, another workflow, a bot, an issue comment) dispatches the `cloud` workflow on the project's repository. GitHub queues the job to a self-hosted runner on the VPS, which starts the sidecars and a job container from the agent image, where the `session` script runs `claude --bg --remote-control` on the checked-out branch. Only what the project's `docker-compose.yml` declares (Postgres, in the figure) runs as a service container; the project's API (`nest start --watch` in the figure) and web dev server (`expo start --web`) are plain processes the session starts inside the job container, from the repository's own instructions, next to `claude` and headless Chromium. Two jobs of the same project run at once, one per runner, each with its own network, sidecars, checkout, processes and session; a second dispatch on the same branch queues behind the first, while different branches run in parallel, and only the host's `/opt/agent/home` and `/opt/agent/seed` mounts and the runner pool are shared. No job container holds a key or token that can push: the runner's own steps push the branch and open the draft pull request with `GITHUB_TOKEN`, while you watch, answer and, if needed, stop the session from the Claude app over Remote Control.
+
+In the order you will do it:
+
+1. **§2, install**, once per host: one user, one directory, one runner per concurrent run.
+2. **§3, by hand**, once: log in, mirror your Claude setup, add the workflow to the project, set the repository's settings.
+3. **§4, a run**: one `gh workflow run` with a branch and a prompt, watched from the Claude app.
+4. **§5, the end**: the draft pull request, pulled and reviewed on the laptop.
+5. **§6 to §9**: looking at the host, upgrading, what the container has, what is not verified yet.
+
 | File | Does |
 | :- | :- |
 | `Dockerfile` | the image: Node, pnpm, Chromium, `gh`, a pinned Claude Code and chrome-devtools MCP, the `session` script, an unprivileged user, git identity and ignore |
@@ -9,6 +21,7 @@ A machine with Docker runs Claude Code sessions unattended: any skill, any promp
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: the container, the sidecars, the configuration, the session, the push and the pull request |
 | `.github/workflows/image.yml` | builds the image on every push to `main`, runs `test.sh`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds the image and checks the pins |
+| `docs/` | the two figures of this README |
 
 A project brings one file, `.github/workflows/cloud.yml`, with its sidecars and its configuration in it (§3.3). `CLAUDE.md` details it.
 
@@ -79,10 +92,29 @@ The image comes from GHCR, pulled by the runner at every job: `image.yml` in thi
 
 ## 4. A run
 
+![A run in six steps: push and dispatch, queue, containers up, session, push and draft pull request, teardown and review](docs/run.svg)
+
+You push a clean branch and run one `gh workflow run` with a prompt (1). A free runner takes the job (2), brings up the sidecars and the agent container and checks out the branch (3), then starts the session, which starts the API and the web dev server as processes in its container, drives headless Chromium via the MCP, works and commits as it goes, optionally watched from the Claude app (4). When the session ends, done, stopped from the app or cancelled, always-run steps commit leftovers as `run: <branch>`, push and open or reuse a draft pull request, nothing if the branch did not move (5). The containers are torn down, and you pull, review and mark the pull request ready (6).
+
 ```bash
 gh workflow run cloud --ref feat/x -f prompt="Run the implement-loop skill against .claude/deliverable.md"   # a skill
 gh workflow run cloud --ref feat/x -f prompt="Migrate the API tests from Jest to Vitest and make them pass"      # a plain prompt
 gh workflow run cloud --ref feat/x -f prompt="$(cat plan.md)"                                                    # a file, as the prompt
+```
+
+The same, shorter, as a shell function in `~/.zshrc`, run from inside the project's checkout (`gh` takes the repository from it); the words after the branch are the prompt:
+
+```zsh
+cloud() {
+  [ $# -ge 2 ] || { echo "usage: cloud <branch> <prompt...>" >&2; return 1; }
+  local branch=$1; shift
+  gh workflow run cloud --ref "$branch" -f prompt="$*"
+}
+```
+
+```bash
+cloud feat/x "Run the implement-loop skill against .claude/deliverable.md"
+cloud feat/x "$(cat plan.md)"
 ```
 
 The run starts from the branch as pushed to GitHub, and comes back as commits on it; what is not pushed does not travel, so a brief in an ignored `.claude/` goes in the prompt itself, as above. The job checks the branch out without keeping the token, brings the sidecars up, and runs `session <repo>/<branch> "<prompt>"` in the container: it launches `claude --bg --name <repo>/<branch> --remote-control <repo>/<branch> --permission-mode auto` with the prompt, then polls `claude agents --json --all` every 30 s until the session is neither `working` nor `blocked`; three listings in a row that fail or lack the session end the step with an error.
