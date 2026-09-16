@@ -4,11 +4,13 @@
 # sandbox would put every command in its own network namespace), drop the client's
 # hooks and status line (commands of the client, absent here), register the
 # chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
-# until the session is neither working nor blocked. On any exit, SIGTERM
+# until the session is neither working nor blocked. Core dumps off, so a crashing
+# child leaves nothing for the last step's git add -A. On any exit, SIGTERM
 # included, the session is stopped and removed; committing what it left is the
 # workflow's job.
 set -euo pipefail
 [ $# = 2 ] || { echo "usage: session <name> <prompt>" >&2; exit 1; }
+ulimit -c 0
 name=$1
 # The session's state per `claude agents`: working, blocked, done..., missing, or error when the listing fails.
 state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state:"missing")})' "$1" 2>/dev/null || echo error; }

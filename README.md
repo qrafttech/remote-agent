@@ -153,11 +153,17 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 Has: the image, `home/` with the login, the mirrored settings, rules and skills, the plugin seed read-only, the checkout of one branch of one repository, the sidecars on the job's network, the app's configuration in the environment, outbound network. During the session it has no token: the checkout keeps none, and the job's token reaches the container only in the last step, after the session is gone. Never has: a way to push anywhere during the session, another repository, sudo, a published port, a real credential, the client's `~/.claude.json` session state. Has, and should not: the host's Docker socket at `/var/run/docker.sock`, which the runner mounts into every job container, unconditionally; the image carries no Docker client, but a session that talked to the socket would be root on the host. This is the one place the container is not the boundary.
 
-## 9. Not verified yet on a real host
+## 9. What a first probe proved, and what is left
 
-The stubs prove `session`, and a first job proved the container's user: the checkout, written by the runner's uid 1000, is writable by the image's, and `HOME` must be set on the `session` step, because the runner writes `/github/home` over `container.env` at `docker create` and a step's `env` is what its `docker exec` gets. The rest, in the order it would break:
+A probe run on MyKarate (`Bring the stack up, open the web app in Chrome, report document.title, then stop`) went green end to end, and settles most of what the stubs cannot:
 
-- **Remote Control from inside a job container**: `claude --bg --remote-control` under `docker exec`, with no TTY, and the session listed under **Code** in the app. Same command as before, different parent process.
+- **The image pull**: the runner pulls `ghcr.io/qrafttech/agent` at every job; a public package needs no login, a private one the `docker login` of §2 as `agent`.
+- **The container's user**: the checkout, written by the runner's uid 1000, is writable by the image's. `HOME` must be set on the `session` step, not `container.env`, because the runner writes `/github/home` over `container.env` at `docker create` and a step's `env` is what its `docker exec` gets.
 - **The plugin seed at runtime**: `CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/seed` read-only, `enabledPlugins` from the mirrored `settings.json`.
+- **The stack the session brings up**: `pnpm install`, the migrations, the API and the web dev server as processes, headless Chromium via the MCP rendering the app, then teardown. A `.env` the session tries to write may be denied; the environment is authoritative and the session falls back to it.
+- **Core dumps**: a crashing child (an optional Expo devtools installer, in the probe) would leave a `core` file that the last step's `git add -A` commits; `session` runs `ulimit -c 0` so none is written.
+
+Left, in the order it would break:
+
+- **Remote Control listed under Code in the app**: the probe registered `claude --bg --remote-control MyKarate/probe` and ran to `done`, so it works headless; confirm the session is watchable and answerable in the app on a run you sit with.
 - **A cancelled job**: whether the runner delivers SIGTERM to `session` inside the container (the trap stops the Claude session) or only severs `docker exec` (the session dies with the container after the last step). Either way the last step commits and pushes.
-- **The image pull**: the runner pulls `ghcr.io/qrafttech/agent` at every job; a private package needs the `docker login` of §2 as `agent`.

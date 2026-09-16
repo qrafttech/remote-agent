@@ -30,7 +30,7 @@ echo "claude $*" >> "$STUBLOG"
 case "$1" in
   agents) echo "${CLAUDE_AGENTS:-[]}" ;;
   mcp) [ "$2" != get ] || [ -n "${MCP_PRESENT:-}" ] ;;
-  --bg) printf '%s' "${@: -1}" > "$T/claude.prompt"; echo "backgrounded · abc123 · x" ;;
+  --bg) printf '%s' "${@: -1}" > "$T/claude.prompt"; echo "corelimit $(ulimit -c)" >> "$STUBLOG"; echo "backgrounded · abc123 · x" ;;
 esac
 EOF2
 chmod +x "$STUBS"/*
@@ -43,6 +43,7 @@ o=$(session app/feat/x "Implement plan.md"); status=$?
 check "sandbox off, hooks and status line dropped in the mounted settings, the rest kept" 'node -e "const s=require(\"$HOME/.claude/settings.json\");process.exit(s.sandbox.enabled===false&&!(\"hooks\" in s)&&!(\"statusLine\" in s)&&s.a===1?0:1)"'
 check "chrome-devtools registered with the image's chromium" 'grep -q "^claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium$" "$STUBLOG"'
 check "launched in the background, named and remote-controlled as <repo>/<branch>, permissions auto" 'grep -q "^claude --bg --name app/feat/x --remote-control app/feat/x --permission-mode auto " "$STUBLOG"'
+check "core dumps off, so a crashing child leaves nothing for git add -A" 'grep -q "^corelimit 0$" "$STUBLOG"'
 check "the prompt says container, sidecars up, commit as you go, then the user's prompt" 'head -1 "$T/claude.prompt" | grep -q "^This is a run of app in its own container" && grep -q "docker-compose.yml declares are already up" "$T/claude.prompt" && grep -q "do not push" "$T/claude.prompt" && tail -1 "$T/claude.prompt" | grep -qx "Implement plan.md"'
 check "a done session ends the step: exit 0, session removed" '[ "$status" = 0 ] && grep -q "^session abc123 done$" <<<"$o" && grep -q "^claude rm abc123$" "$STUBLOG" && ! grep -q "^claude stop" "$STUBLOG"'
 
