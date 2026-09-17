@@ -12,7 +12,7 @@ if [ "${1:-}" = image ]; then
   check "claude pinned" 'inside "claude --version" | grep -q "^$CLAUDE_VERSION "'
   check "pnpm pinned" '[ "$(inside "pnpm -v")" = "$PNPM_VERSION" ]'
   check "chrome-devtools-mcp pinned" 'inside "chrome-devtools-mcp --version" | grep -q "$DEVTOOLS_MCP_VERSION"'
-  check "gh and session on the path" 'inside "gh --version" | grep -q "^gh version" && inside "session 2>&1 || true" | grep -q "^usage: session"'
+  check "session on the path" 'inside "session 2>&1 || true" | grep -q "^usage: session"'
   check "chromium renders headless without a sandbox" 'inside "chromium --headless --dump-dom about:blank" | grep -q "<html"'
   check "runs as uid 1000, the runner user of the host" '[ "$(inside "id -u")" = 1000 ]'
   check "git identity and ignore baked in" '[ "$(inside "git config user.name")" = agent ] && [ -z "$(inside "cd \$(mktemp -d) && git init -q . && touch a.log && git status --porcelain")" ]'

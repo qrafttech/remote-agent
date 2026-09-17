@@ -6,9 +6,6 @@ ARG AGENT_UID=1000
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       git curl ca-certificates rsync procps chromium fonts-liberation \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 RUN corepack disable \
  && npm install -g "pnpm@$PNPM_VERSION" "chrome-devtools-mcp@$DEVTOOLS_MCP_VERSION"

@@ -18,23 +18,7 @@ jobs:
   run:
     runs-on: self-hosted
     timeout-minutes: 1380
-    container:
-      image: ghcr.io/qrafttech/agent
-      volumes:
-        - /opt/agent/home:/home/agent
-        - /opt/agent/seed:/opt/seed:ro
-      env:
-        CLAUDE_CODE_PLUGIN_SEED_DIR: /opt/seed
-    # The project's sidecars: each service of docker-compose.yml, under the same name, with its healthcheck; no ports.
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: app
-          POSTGRES_PASSWORD: app
-          POSTGRES_DB: app
-        options: --health-cmd "pg_isready -U app" --health-interval 5s --health-timeout 3s --health-retries 5
-    # The project's configuration: the keys of its .env.example files, each sidecar at its service name, dev values only; a real one is a repository secret.
+    # The project's configuration: the keys of its .env.example files, each service of docker-compose.yml at its service name, dev values only; a real one is a repository secret.
     env:
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
@@ -43,16 +27,29 @@ jobs:
         with:
           persist-credentials: false
       - env:
-          HOME: /home/agent
           PROMPT: ${{ inputs.prompt }}
-        run: session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
+          CONFIG: ${{ toJSON(env) }}
+        run: |
+          run=cloud-$GITHUB_RUN_ID
+          network=
+          if [ -f docker-compose.yml ]; then
+            { echo services:; for s in $(docker compose config --services); do echo "  $s: {ports: !reset []}"; done; } > "$RUNNER_TEMP/unpublished.yml"
+            docker compose -p "$run" -f docker-compose.yml -f "$RUNNER_TEMP/unpublished.yml" up -d --wait
+            network="--network ${run}_default"
+          fi
+          exec docker run --rm --init --pull always --name "$run" $network \
+            $(jq -r 'del(.PROMPT, .CONFIG) | keys[] | "-e " + .' <<<"$CONFIG") \
+            -e CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/seed -v /opt/agent/home:/home/agent -v /opt/agent/seed:/opt/seed:ro \
+            -v "$PWD:$PWD" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
       - if: always()
         env:
           PROMPT: ${{ inputs.prompt }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          git add -A
-          git diff --cached --quiet || git commit -qm "run: $GITHUB_REF_NAME"
+          docker rm -f "cloud-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+          [ ! -f docker-compose.yml ] || docker compose -p "cloud-$GITHUB_RUN_ID" down -v
+          git add -A -- . ':!*.log' ':!*.tmp' ':!*.pid'
+          git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $GITHUB_REF_NAME"
           [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || { echo "no changes on $GITHUB_REF_NAME"; exit 0; }
           git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
           gh pr list --head "$GITHUB_REF_NAME" --json url -q '.[].url' | grep . ||
