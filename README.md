@@ -90,17 +90,23 @@ gh workflow run cloud --ref feat/x -f prompt="Run the implement-loop skill again
 gh workflow run cloud --ref feat/x -f prompt="$(cat plan.md)"    # a file as the prompt: what is not pushed does not travel
 ```
 
-Or as a shell function, run from inside the project's checkout; the words after the branch are the prompt:
+Or as a shell function, run from inside the project's checkout, with the prompt as its words. The branch is the checkout's: on `main` it pushes HEAD as a new `cloud/<date>-<prompt slug>` branch, so a run never targets `main`; on any other branch it pushes that branch and the run continues it, its commits landing on the same branch and pull request. A dirty tree is refused, since what is not pushed does not travel. After a run on a branch, `git pull --rebase` before the next `cloud` on it, the job pushed commits there.
 
 ```zsh
 cloud() {
-  [ $# -ge 2 ] || { echo "usage: cloud <branch> <prompt...>" >&2; return 1; }
-  local branch=$1; shift
+  [ $# -ge 1 ] || { echo "usage: cloud <prompt...>" >&2; return 1; }
+  [ -z "$(git status --porcelain)" ] || { echo "cloud: uncommitted changes; commit first, what is not pushed does not travel" >&2; return 1; }
+  local branch=$(git branch --show-current)
+  if [ "$branch" = main ]; then
+    branch="cloud/$(date +%m%d-%H%M)-$(printf '%s' "$*" | tr -cs 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40 | sed 's/-$//')"
+  fi
+  git push -q origin "HEAD:refs/heads/$branch" || return 1
   gh workflow run cloud --ref "$branch" -f prompt="$*"
+  echo "$branch"
 }
 ```
 
-The job checks the branch out without keeping the token, brings `docker-compose.yml` up, and runs `session <repo>/<branch> "<prompt>"` in the agent container with the job's `env:` passed through. `session` launches `claude --bg --name <repo>/<branch> --remote-control <repo>/<branch> --permission-mode auto`, then polls `claude agents --json --all` every 30 s until the session is neither `working` nor `blocked`; three listings in a row that fail or lack the session end the step with an error. Your prompt is preceded by three lines: this is a run of the project in its own container and the app's configuration is in the environment; the services `docker-compose.yml` declares are already up under their names, so do not start Docker, bring the rest of the stack up from the repository's own instructions and stop what you started (a repository without `docker-compose.yml` is told to bring the whole stack up); commit your work on this branch as you go, with real messages, and do not push.
+The job checks the branch out without keeping the token, brings `docker-compose.yml` up, and runs `session <repo>/<branch> "<prompt>"` in the agent container with the job's `env:` passed through. `session` launches `claude --bg --name <repo>/<branch> --remote-control <repo>/<branch> --permission-mode auto`, then polls `claude agents --json --all` every 30 s until the session is neither `working` nor `blocked`; three listings in a row that fail or lack the session end the step with an error. The state is the session's own word and a session can end its turn without changing it: one that says `working` while the CLI lists it `idle` three polls in a row, 90 s, is over, and the step prints `session <id> idle, working by its own account` and ends as for a done one. A `blocked` session is idle too and is waited for: it has a question, answered in the app. Your prompt is preceded by three lines: this is a run of the project in its own container and the app's configuration is in the environment; the services `docker-compose.yml` declares are already up under their names, so do not start Docker, bring the rest of the stack up from the repository's own instructions and stop what you started (a repository without `docker-compose.yml` is told to bring the whole stack up); commit your work on this branch as you go, with real messages, and do not push.
 
 **Code → `<repo>/<branch>`** in the Claude app is where the run is watched, answered and stopped. `gh run watch` shows the job; `gh run list --workflow cloud` the queue.
 
@@ -123,7 +129,7 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 ## 7. Upgrading
 
-- **Claude Code, pnpm, the MCP, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image`, push to `main`; the next job pulls the new image. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugins and the workspace trust on the real host. `session` reads `backgrounded · <id>` and the `working`/`blocked` states from the CLI, and fails loudly after three polls when they change, rather than reporting no changes.
+- **Claude Code, pnpm, the MCP, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image`, push to `main`; the next job pulls the new image. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugins and the workspace trust on the real host. `session` reads `backgrounded · <id>`, the `working`/`blocked` states and the `idle` status from the CLI, and fails loudly after three polls when they change, rather than reporting no changes.
 - **Docker, Compose, `git`, `jq`, `gh`**: `apt upgrade`, as root. **The runners** update themselves; `./config.sh remove --token <token>` unregisters one.
 - **Your Claude setup**: the two lines of §3.2. Every session start also adapts the mirrored copy: in `settings.json`, the sandbox off, `hooks` and `statusLine` dropped since they name commands of the client, the chrome-devtools MCP registered with the image's Chromium; in the two plugin registries, the client's `~/.claude/plugins/` paths rewritten to the container's. Everything else applies as on the client, `permissions.ask` included: a rule that prompts on the client prompts in the app.
 - **Rotate the login**: `/logout` then `/login` as in §3.1, twice a year, and after any doubt about the box.
@@ -144,5 +150,6 @@ Four probe runs on MyKarate (`Bring the stack up, open the web app in Chrome, re
 
 - With the plugins in `home/.claude/plugins/` and no seed, the same probe went green: `session … done` after 2.5 min, `no changes on probe`.
 - With `home/.claude/` shipped from git as in §3.2, the same probe went green again: `session … done` after 2.5 min, `no changes on probe`; `session` had adapted the fresh copy, the sandbox off and the registries on the container's paths.
+- The next run of the same probe, dispatched through the `cloud` function of §4, answered in 2 min 20 s and never declared `done`: `~/.claude/jobs/<id>/state.json` kept `working`, `testing in progress`, with the CLI's `tempo: idle` and nothing in flight, and `claude agents` listed it `status: idle, state: working`. `session` polled the state alone and would have held the job for its 1380 min; `claude stop` from the host ended it, `session … stopped`, `no changes on probe`. Hence the idle rule of §4.
 
 Left: a `blocked` session answered from the app; the sessions were watched there, none was asked a question.

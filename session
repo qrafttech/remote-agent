@@ -5,7 +5,8 @@
 # hooks and status line (commands of the client, absent here), point the mirrored
 # plugin registries at this home instead of the client's, register the
 # chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
-# until the session is neither working nor blocked. Core dumps off, so a crashing
+# until the session is neither working nor blocked, or has sat idle while saying
+# working, its turn over. Core dumps off, so a crashing
 # child leaves nothing for the last step's git add -A. On any exit, SIGTERM
 # included, the session is stopped and removed; committing what it left is the
 # workflow's job.
@@ -13,13 +14,14 @@ set -euo pipefail
 [ $# = 2 ] || { echo "usage: session <name> <prompt>" >&2; exit 1; }
 ulimit -c 0
 name=$1
-# The session's state per `claude agents`: working, blocked, done..., missing, or error when the listing fails.
-state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state:"missing")})' "$1" 2>/dev/null || echo error; }
+# The session's state and status per `claude agents`: the state is the session's own word (working, blocked, done...),
+# the status the CLI's (running, idle); missing when it is not listed, error when the listing fails.
+state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state+" "+(a.status||""):"missing")})' "$1" 2>/dev/null || echo error; }
 # Stop the session if it is still going, then forget it, whatever ends this script.
 finish() {
   trap - EXIT TERM INT
   [ -z "${id:-}" ] || {
-    case $(state_of "$id") in working|blocked|error) claude stop "$id" >/dev/null || true ;; esac
+    case $(state_of "$id") in working*|blocked*|error*) claude stop "$id" >/dev/null || true ;; esac
     claude rm "$id" >/dev/null || true
   }
 }
@@ -38,12 +40,13 @@ id=$(claude --bg --name "$name" --remote-control "$name" --permission-mode auto 
      sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')
 [ -n "$id" ] || { echo "no session id" >&2; exit 1; }
 echo "session $id running as $name"
-strikes=0
+strikes=0 idle=0
 while sleep "${POLL:-30}" & wait $!; do
-  state=$(state_of "$id")
-  case $state in
-    working|blocked) strikes=0 ;;
-    missing|error) [ $((strikes+=1)) -lt 3 ] || { echo "session $id is $state for claude agents --all, three times in a row" >&2; exit 1; } ;;
+  read -r state status < <(state_of "$id")
+  case "$state $status" in
+    "working idle") strikes=0; [ $((idle+=1)) -lt 3 ] || { echo "session $id idle, working by its own account"; break; } ;;
+    working*|blocked*) strikes=0 idle=0 ;;
+    missing*|error*) [ $((strikes+=1)) -lt 3 ] || { echo "session $id is $state for claude agents --all, three times in a row" >&2; exit 1; } ;;
     *) echo "session $id $state"; break ;;
   esac
 done

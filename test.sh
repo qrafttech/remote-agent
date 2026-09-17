@@ -55,6 +55,12 @@ check "a done session ends the step: exit 0, session removed" '[ "$status" = 0 ]
 MCP_PRESENT=1 session app/feat/x x >/dev/null
 check "without docker-compose.yml the prompt says to bring it all up; a registered MCP is not added twice" 'grep -q "^Bring the stack up yourself" "$T/claude.prompt" && ! grep -q "mcp add" "$STUBLOG"'
 
+: > "$STUBLOG"; o=$(CLAUDE_AGENTS='[{"id":"abc123","state":"working","status":"idle"}]' session app/feat/x x); status=$?
+check "a session idle three polls in a row while saying working has ended its turn: exit 0, the session stopped and removed" '[ "$status" = 0 ] && grep -q "^session abc123 idle, working by its own account$" <<<"$o" && grep -q "^claude stop abc123$" "$STUBLOG" && grep -q "^claude rm abc123$" "$STUBLOG"'
+( CLAUDE_AGENTS='[{"id":"abc123","state":"blocked","status":"idle"}]' exec bash "$here/session" app/feat/x x > "$T/blocked.out" 2>&1 ) &
+pid=$!; sleep 1; kill -TERM "$pid" 2>/dev/null; wait "$pid"; status=$?
+check "a blocked session is idle too, and waits for its answer: still running after ten polls" '[ "$status" = 143 ] && ! grep -q "idle" "$T/blocked.out"'
+
 o=$(CLAUDE_AGENTS='[]' session app/feat/x x); status=$?
 check "a session that never appears: error after three polls" '[ "$status" = 1 ] && grep -q "missing .* three times" <<<"$o"'
 : > "$STUBLOG"; o=$(CLAUDE_AGENTS=oops session app/feat/x x)
