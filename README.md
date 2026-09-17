@@ -13,7 +13,7 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml` |
 | `.github/workflows/image.yml` | builds and tests the image on every push to `main`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds and checks the pins |
-| `AGENTS.md` | the reference: every step, state, message, the isolation model, the probes |
+| `AGENTS.md` | what a project brings, the rules of this repository, and the reference: every step, state, message |
 | `docs/` | the two figures |
 
 ## 1. Layout
