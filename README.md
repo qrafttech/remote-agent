@@ -143,5 +143,6 @@ Four probe runs on MyKarate (`Bring the stack up, open the web app in Chrome, re
 - `gh run cancel` a minute into the session: the step ended within 3 s, the last step printed `no changes on probe`, `claude agents --json --all` in the shared home lists nothing, and the session vanished from the app, which is `session`'s trap (`claude stop`, then `claude rm`) and what a killed container would not do.
 
 - With the plugins in `home/.claude/plugins/` and no seed, the same probe went green: `session … done` after 2.5 min, `no changes on probe`.
+- With `home/.claude/` shipped from git as in §3.2, the same probe went green again: `session … done` after 2.5 min, `no changes on probe`; `session` had adapted the fresh copy, the sandbox off and the registries on the container's paths.
 
 Left: a `blocked` session answered from the app; the sessions were watched there, none was asked a question.
