@@ -23,6 +23,9 @@ fi
 T=$(cd "${TMPDIR:-/tmp}" && pwd -P)/session-test.$$; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/stubs" "$T/home/.claude" "$T/repo"
 echo '{"a":1,"hooks":{"Stop":[]},"statusLine":{"type":"command","command":"x"}}' > "$T/home/.claude/settings.json"
+mkdir -p "$T/home/.claude/plugins"
+echo '{"m":{"installLocation":"/Users/me/.claude/plugins/marketplaces/m"}}' > "$T/home/.claude/plugins/known_marketplaces.json"
+echo '{"plugins":{"p@m":[{"installPath":"/Users/me/.claude/plugins/cache/m/p/1"}]}}' > "$T/home/.claude/plugins/installed_plugins.json"
 export HOME=$T/home STUBS=$T/stubs STUBLOG=$T/stub.log POLL=0.1 LC_ALL=C
 cat > "$STUBS/claude" <<'EOF2'
 #!/usr/bin/env bash
@@ -41,6 +44,7 @@ session() { CLAUDE_AGENTS=${CLAUDE_AGENTS:-'[{"id":"abc123","state":"done"}]'} b
 : > "$STUBLOG"; printf 'services:\n  postgres:\n    image: postgres:17\n' > docker-compose.yml
 o=$(session app/feat/x "Implement plan.md"); status=$?
 check "sandbox off, hooks and status line dropped in the mounted settings, the rest kept" 'node -e "const s=require(\"$HOME/.claude/settings.json\");process.exit(s.sandbox.enabled===false&&!(\"hooks\" in s)&&!(\"statusLine\" in s)&&s.a===1?0:1)"'
+check "the mirrored plugin registries point at this home, not the client's" '[ "$(node -e "console.log(require(\"$HOME/.claude/plugins/known_marketplaces.json\").m.installLocation)")" = "$HOME/.claude/plugins/marketplaces/m" ] && [ "$(node -e "console.log(require(\"$HOME/.claude/plugins/installed_plugins.json\").plugins[\"p@m\"][0].installPath)")" = "$HOME/.claude/plugins/cache/m/p/1" ]'
 check "chrome-devtools registered with the image's chromium" 'grep -q "^claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium$" "$STUBLOG"'
 check "launched in the background, named and remote-controlled as <repo>/<branch>, permissions auto" 'grep -q "^claude --bg --name app/feat/x --remote-control app/feat/x --permission-mode auto " "$STUBLOG"'
 check "core dumps off, so a crashing child leaves nothing for git add -A" 'grep -q "^corelimit 0$" "$STUBLOG"'
