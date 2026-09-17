@@ -1,47 +1,33 @@
 # Remote agent host
 
-A machine with Docker runs Claude Code sessions unattended: any skill, any prompt, any project, several at a time — and the projects need not be the same shape. A client dispatches the project's `cloud` workflow with a branch and a prompt; GitHub only dispatches, queues, holds the secrets and takes the branch and pull request back, while a self-hosted runner on the host does the work: it brings the project's `docker-compose.yml` up — a database sidecar, the app itself, or nothing when the project has no such file — runs the session in a container from this repository's image, and, when the session ends, pushes the branch and opens a draft pull request. Nothing runs in GitHub's cloud. The container is the boundary: no key, no sudo, no published port, no Docker socket, so the host keeps serving whatever else it serves.
+A machine with Docker runs Claude Code sessions unattended: any skill, any prompt, any project, several at a time. You dispatch a project's `cloud` workflow with a branch and a prompt; a self-hosted runner brings the project's `docker-compose.yml` up, runs the session in a container from this repository's image, and when the session ends pushes the branch and opens a draft pull request. GitHub only dispatches, queues, holds the secrets and takes the result back — nothing runs in its cloud. The container is the boundary: no token, no sudo, no published port, no Docker socket, so the host keeps serving whatever else it serves.
 
 ![Architecture: triggers, GitHub, the VPS with two runners, and the Claude app](docs/architecture.svg)
 
-The trigger is anything with `gh`: a laptop, the Actions tab, another workflow, a bot. GitHub's part ends there and at the token and pull request; the runner is a process on the host — not in GitHub's cloud — that runs the job's steps: `docker compose up` on the project's own `docker-compose.yml`, then `docker run` of the agent image on the same network, where `session` runs `claude --bg --remote-control` on the checked-out branch. What `docker-compose.yml` declares is the only container next to the agent's, and it differs by project: the figure's left job declares a Postgres sidecar and the session brings the rest of the stack — the API, the web dev server — up as processes next to `claude` and headless Chromium; the right job declares no database sidecar, an embedded store, so nothing runs beside the agent container and the session brings the whole stack up itself. Either way those servers are the session's own processes, started from the repository's own instructions. One job per runner, each with its own network, sidecars if any, checkout and session; the same branch queues behind itself, different branches run in parallel; only `/opt/agent/home` and the runner pool are shared. The session is watched, answered and, if needed, stopped from the Claude app over Remote Control.
+The trigger is anything with `gh`: a laptop, the Actions tab, another workflow, a bot. Inside the container, the session is a plain process on the checked-out branch; it brings the app's own servers up from the repository's instructions, and a headless Chromium (via the chrome-devtools MCP) lets it see its work. What `docker-compose.yml` declares — a Postgres sidecar, the app itself, or nothing — is the only container next to the agent's, and the prompt adapts to each shape. One job per runner; the same branch queues behind itself, different branches run in parallel. The session is watched, answered and, if needed, stopped from the Claude app over Remote Control.
 
 | File | Does |
 | :- | :- |
 | `Dockerfile` | the image: Node, pnpm, Chromium, a pinned Claude Code and chrome-devtools MCP, `session`, an unprivileged user, git identity and ignore |
-| `session` | the one step of a run, inside the container: sandbox off, the client's hooks and status line dropped, the plugin registries pointed at this home, the MCP registered, `claude --bg --remote-control` on the checkout, polled until it ends |
-| `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: the configuration, the sidecars, the session, the teardown, the push and the pull request |
+| `session` | the one step of a run, inside the container: adapt the mirrored setup, launch `claude --bg --remote-control`, poll until it ends |
+| `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: configuration, sidecars, session, teardown, push and pull request |
 | `.github/workflows/image.yml` | builds the image on every push to `main`, runs `test.sh`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds the image and checks the pins |
+| `AGENTS.md` | the reference: every step, state, message and refusal, the isolation model, the probe record |
 | `docs/` | the two figures of this README |
 
-Why a host and not a Claude Code cloud session: a session that verifies its work needs the app's database, API, web server and a browser, and brings them up itself. Why GitHub Actions and not a script: the runner, the checkout, the secrets, the queue, the logs, the token that pushes and the cancel button exist already; what is left is one step. Why that step runs Docker itself and not the runner's `container:` and `services:`: the runner would mount the host's Docker socket into the session's container, unconditionally, and would need every sidecar retyped; `docker compose up` and `docker run` give the session a container with nothing of the host in it and the project's `docker-compose.yml` untouched.
+`AGENTS.md` has the full anatomy of a run, what the container can and cannot reach, and why it is built this way.
 
 ## 1. Layout
 
-On the host, one user, `agent`, uid 1000 (the image's user), in the `docker` group, the one you ssh as. It owns the runners and one directory that knows nothing about any project:
+On the host, one user, `agent`, uid 1000 (the image's user), in the `docker` group, the one you ssh as. It owns:
 
 ```
-/opt/agent/home/       the agent's $HOME in the container, shared by every run: the login, plus the client's `~/.claude` at `HEAD` and its `plugins/`
-~/runner-<repo>-<n>/   one GitHub Actions runner, a systemd service; one per concurrent run, per repository; its _work/ holds the checkout during a run
+/opt/agent/home/       the agent's $HOME in the container, shared by every run: the login, plus your ~/.claude at HEAD and its plugins/
+~/runner-<repo>-<n>/   one GitHub Actions runner, a systemd service; one per concurrent run, per repository
 ```
 
-One run is one job on one of those runners:
-
-```
-job                                          steps on the host, as the runner's user; one Compose project per job, cloud-<run id>
-├─ docker compose up -d --wait                  the project's docker-compose.yml as is, ports unpublished: a Postgres sidecar here, healthy, network cloud-<run id>_default; skipped when the project declares none
-├─ docker run … agent session …                 ghcr.io/qrafttech/agent on that network; /home/agent from the host, the checkout's parent directory at its host path
-│  └─ session <repo>/<branch> "<prompt>"        the container's process, behind docker-init; launches the session, holds the step
-│     └─ claude --bg --remote-control           the session, a plain process in the checkout
-│        ├─ API, web dev server                 started by the session from the repository's own instructions
-│        └─ Chromium, headless                  spawned by the chrome-devtools MCP
-└─ docker compose down -v · commit · push · PR  the last step, on the host, always
-```
-
-The session is a process, not a nested container. A sidecar is the one thing it does not start: where the project declares one, the job brought it up as Compose project `cloud-<run id>`, under its service name, every `ports:` reset by an override generated from `docker compose config --services`, and the prompt says so; where the project declares none — an embedded store, or no `docker-compose.yml` at all — there is no container but the agent's and the prompt says to bring the whole stack up. The Claude sandbox stays off because on Linux it gives every Bash command its own network namespace, so a server started in one command is unreachable from the next; the container is the boundary instead. `docker run` mounts `/opt/agent/home` and the checkout's parent directory, joins the job's network, passes the job's `env:` key by key, and nothing else. The parent directory and not the checkout: pnpm keeps a store at the top of the checkout's mount, which would be inside the checkout, 80,000 files for `git add -A`; at the top of the parent's it sits next to the checkout, on the host, kept from one run to the next.
-
-Runs do not collide: each job has its own Compose project, network, volumes and checkout, so `postgres:5432`, where a job has a sidecar, is its own database in every container. The shared `home/` is safe the way several terminals on one machine are: one login serves any number of sessions, and session state is keyed by checkout path, the same on every run of a runner. The container runs as uid 1000, the runner's user, so host and container both own what a run writes. The host's firewall does not change.
+Each job gets its own network, sidecars, checkout and session; only `home/` and the runner pool are shared, and that is safe the way several terminals on one machine are.
 
 ## 2. Install (once per host)
 
@@ -53,9 +39,9 @@ ssh root@vps 'curl -fsSL https://get.docker.com | sh && apt install -y git jq \
   && useradd -m -u 1000 -G docker agent && install -d -o agent -g agent -m 700 /opt/agent /opt/agent/home'
 ```
 
-Docker from Docker's script because Debian's `docker.io` lacks Compose v2, and `up --wait` with the `!reset` override needs Compose 2.24 or later; `git` for the checkout and the last step, `jq` for the session step, `gh` for the pull request. Give `agent` your SSH key and passwordless `sudo` for the service install below.
+Docker from Docker's script because Debian's `docker.io` lacks Compose v2, and the workflow needs Compose 2.24 or later. Give `agent` your SSH key and passwordless `sudo` for the service install below.
 
-One runner per concurrent run, per repository; the registration token comes from the client, where `gh` is admin on `owner/repo`, and is good for an hour:
+Then one runner per concurrent run, per repository. The registration token comes from where `gh` is admin on `owner/repo`, and is good for an hour:
 
 ```bash
 v=$(gh release view --repo actions/runner --json tagName -q '.tagName' | tr -d v)
@@ -68,17 +54,18 @@ for n in 1 2; do
 done
 ```
 
-The runners appear under Settings → Actions → Runners, idle; each starts with the box and takes one job at a time. The image is pulled from GHCR at every job (`image.yml` pushes `ghcr.io/qrafttech/agent`, amd64, on every push to `main`): set the package public once after the first push, or `ssh agent@vps docker login ghcr.io` with a token that reads packages.
+The runners appear under Settings → Actions → Runners, idle. The image is pulled from GHCR at every job: set the `ghcr.io/qrafttech/agent` package public once after the first push, or `ssh agent@vps docker login ghcr.io` with a token that reads packages.
 
 ## 3. What only hands can do
 
-1. **Login**, once per host: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude'`, `/login`, the URL in a browser, the code back. The credentials land in `home/.claude/.credentials.json`, `-rw-------`, and stay there; never copy that file. Keep `ANTHROPIC_API_KEY` unset: Remote Control needs the subscription.
-2. **Your Claude setup**, once and whenever it changes: the committed tree of `~/.claude` (`settings.json`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `agents/`), and `plugins/` as is, into `home/.claude/`; `enabledPlugins` in that `settings.json` says which plugins are on. What is not committed does not travel, so commit first. Nothing else under `home/.claude/` is touched, the login in particular. The copy is never edited by hand: every session start adapts it (§7), a session may update a marketplace, and the next sync puts both back.
+1. **Login**, once per host: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude'`, then `/login`, the URL in a browser, the code back. The credentials land in `home/.claude/.credentials.json`, `-rw-------`, and stay there; never copy that file. Keep `ANTHROPIC_API_KEY` unset: Remote Control needs the subscription.
+2. **Your Claude setup**, once and whenever it changes — the committed tree of `~/.claude`, plus `plugins/` as is. What is not committed does not travel, so commit first. Nothing else under `home/.claude/` is touched, the login in particular:
    ```bash
    git -C ~/.claude archive HEAD | ssh agent@vps "cd /opt/agent/home/.claude && rm -rf $(git -C ~/.claude ls-tree --name-only HEAD | xargs) && tar x"
    rsync -a --delete ~/.claude/plugins/ agent@vps:/opt/agent/home/.claude/plugins/
    ```
-3. **The project's workflow**, once per project: `workflow.yml` from here at `.github/workflows/cloud.yml`, its `env:` filled with the keys of the project's `.env.example` files, each service of `docker-compose.yml` at its service name (`postgres:5432`, not `localhost`). Dev values go in the file; anything that must not be in the tree is a repository secret, `gh secret set NAME`, read as `${{ secrets.NAME }}`. Dev credentials only. A project with a Postgres sidecar names it at its service name (`postgres:5432`); a project with no database sidecar names only `localhost` servers and has no database container beside the agent's. The template is the same for both, and per new project this file and a runner (§2) are the whole cost. The workflow must be on `main` for `gh workflow run` to find it, and on the branch it runs.
+   Never edit the copy by hand: every session start adapts it (see `AGENTS.md`), and the next sync puts everything back.
+3. **The project's workflow**, once per project: copy `workflow.yml` to `.github/workflows/cloud.yml` and fill its `env:` with the keys of the project's `.env.example` files — each `docker-compose.yml` service at its service name (`postgres:5432`, not `localhost`), the app's own servers at `localhost`. Dev values go in the file; anything that must not be in the tree is a repository secret, `gh secret set NAME`, read as `${{ secrets.NAME }}`. Dev credentials only — nothing that reaches a real bucket, database or mailbox. The workflow must be on `main` for `gh workflow run` to find it, and on the branch it runs. This file and a runner (§2) are the whole cost of a new project.
 4. **The repository's settings**, once per project: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests", on. Protect `main`, so the job's token can only ever add a branch.
 
 ## 4. A run
@@ -90,7 +77,7 @@ gh workflow run cloud --ref feat/x -f prompt="Run the implement-loop skill again
 gh workflow run cloud --ref feat/x -f prompt="$(cat plan.md)"    # a file as the prompt: what is not pushed does not travel
 ```
 
-Or as a shell function, run from inside the project's checkout, with the prompt as its words. The branch is the checkout's: on `main` it pushes HEAD as a new `cloud/<date>-<prompt slug>` branch, so a run never targets `main`; on any other branch it pushes that branch and the run continues it, its commits landing on the same branch and pull request. A dirty tree is refused, since what is not pushed does not travel. After a run on a branch, `git pull --rebase` before the next `cloud` on it, the job pushed commits there.
+Or as a shell function, run from inside the project's checkout, with the prompt as its words. On `main` it pushes HEAD as a new `cloud/<date>-<prompt slug>` branch, so a run never targets `main`; on any other branch it pushes that branch and the run continues it. A dirty tree is refused, since what is not pushed does not travel. After a run on a branch, `git pull --rebase` before the next `cloud` on it.
 
 ```zsh
 cloud() {
@@ -106,15 +93,15 @@ cloud() {
 }
 ```
 
-The job checks the branch out without keeping the token, brings `docker-compose.yml` up, and runs `session <repo>/<branch> "<prompt>"` in the agent container with the job's `env:` passed through. `session` launches `claude --bg --name <repo>/<branch> --remote-control <repo>/<branch> --permission-mode auto`, then polls `claude agents --json --all` every 30 s until the session is neither `working` nor `blocked`; three listings in a row that fail or lack the session end the step with an error. The state is the session's own word and a session can end its turn without changing it: one that says `working` while the CLI lists it `idle` three polls in a row, 90 s, is over, and the step prints `session <id> idle, working by its own account` and ends as for a done one. A `blocked` session is idle too and is waited for: it has a question, answered in the app. Your prompt is preceded by three lines: this is a run of the project in its own container and the app's configuration is in the environment; the services `docker-compose.yml` declares are already up under their names, so do not start Docker, bring the rest of the stack up from the repository's own instructions and stop what you started (a repository without `docker-compose.yml` is told to bring the whole stack up); commit your work on this branch as you go, with real messages, and do not push.
+The job checks the branch out, brings `docker-compose.yml` up if there is one, and runs the session in the agent container with the job's `env:` passed through. The prompt is preceded by three lines telling the session it runs in its own container, that the declared sidecars are already up (or that it must bring the whole stack up), and to commit as it goes without pushing — the exact wording, states and poll rules are in `AGENTS.md`.
 
 **Code → `<repo>/<branch>`** in the Claude app is where the run is watched, answered and stopped. `gh run watch` shows the job; `gh run list --workflow cloud` the queue.
 
 ## 5. The end
 
-Nothing to do on the client. The last step runs `if: always()`, so after a session that ended, was stopped in the app, cancelled or timed out: it removes the agent container if a cancel left it, takes the Compose project down with its volumes, commits whatever the session left uncommitted as `run: <branch>` (`*.log`, `*.tmp`, `*.pid` excepted), pushes the branch with the job's token, and opens a draft pull request titled with the prompt's first line and bodied with the prompt, or leaves the one already open on that branch alone. A run that changed nothing pushes nothing: `no changes on <branch>` in the job log. Then `git pull`, review, mark ready.
+Nothing to do on the client. The last step always runs — after a session that ended, was stopped in the app, cancelled or timed out: it tears the containers down, commits whatever the session left uncommitted as `run: <branch>`, pushes with the job's token, and opens a draft pull request titled and bodied with the prompt (or leaves the one already open alone). A run that changed nothing pushes nothing: `no changes on <branch>` in the job log. Then `git pull`, review, mark ready.
 
-Cancelling: stop the session in the Claude app and the poll sees it end within 30 s. `gh run cancel <id>` is the hard way: the runner signals the step, `docker run` forwards it to `session`, which stops and removes the Claude session; the last step still commits and pushes. `timeout-minutes` is 23 hours because the job's token lives 24 at most; a session `blocked` on a question nobody answers holds a runner until then.
+Cancelling: stop the session in the Claude app and the poll sees it end within 30 s; `gh run cancel <id>` is the hard way and the last step still commits and pushes. A session blocked on a question nobody answers holds a runner until the 23-hour timeout.
 
 ## 6. Looking at the host
 
@@ -129,30 +116,7 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 ## 7. Upgrading
 
-- **Claude Code, pnpm, the MCP, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image`, push to `main`; the next job pulls the new image. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugins and the workspace trust on the real host. `session` reads `backgrounded · <id>`, the `working`/`blocked` states and the `idle` status from the CLI, and fails loudly after three polls when they change, rather than reporting no changes.
+- **Claude Code, pnpm, the MCP, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image`, push to `main`; the next job pulls the new image. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugins and the workspace trust on the real host. `session` reads the CLI's output and states, and fails loudly after three bad polls when they change, rather than reporting no changes.
 - **Docker, Compose, `git`, `jq`, `gh`**: `apt upgrade`, as root. **The runners** update themselves; `./config.sh remove --token <token>` unregisters one.
-- **Your Claude setup**: the two lines of §3.2. Every session start also adapts the mirrored copy: in `settings.json`, the sandbox off, `hooks` and `statusLine` dropped since they name commands of the client, the chrome-devtools MCP registered with the image's Chromium; in the two plugin registries, the client's `~/.claude/plugins/` paths rewritten to the container's. Everything else applies as on the client, `permissions.ask` included: a rule that prompts on the client prompts in the app.
+- **Your Claude setup**: the two lines of §3.2.
 - **Rotate the login**: `/logout` then `/login` as in §3.1, twice a year, and after any doubt about the box.
-
-## 8. What the container has and never has
-
-Has: the image, `home/` with the login and the mirrored setup, the checkout of one branch, the sidecars on the job's network, the app's configuration in the environment, outbound network. Never has: a token (the checkout keeps none; the job's is only in the last step, on the host, after the container is gone), a way to push, another repository, sudo, a published port, a real credential, the client's `~/.claude.json`, the host's Docker socket. What does have Docker is the runner's user, and so the steps of `cloud.yml` on the dispatched branch: a session can edit that file, so read the diff of `.github/` in the pull request before dispatching the branch again.
-
-## 9. What the probes proved, and what is left
-
-Four probe runs of a project with a Postgres sidecar (`Bring the stack up, open the web app in Chrome, report document.title, then stop`) settle what the stubs cannot:
-
-- `docker run --pull always` pulls the image; a public package needs no login. The checkout, written by the runner's uid 1000, is writable by the image's user; `HOME` stays `/home/agent`, where the login is mounted. The mirrored plugins load with `enabledPlugins` from the mirrored `settings.json`.
-- The session runs `pnpm install`, the migrations, the API and the web dev server as processes, and headless Chromium renders the app via the MCP. A `.env` it tries to write may be denied; the environment is authoritative and it falls back to it. A crashing child would leave a `core` file for `git add -A`; `session` runs `ulimit -c 0`.
-- `docker compose up --wait` with the `!reset` override on Compose v5, Postgres healthy in 6 s; `toJSON(env)` is the job's `env:` and nothing else, so the prompt is not in the container's environment; the last step takes the project down, commits, pushes and opens the pull request from the host.
-- With the checkout alone mounted, a run committed `.pnpm-store/`, 83,410 files; with the parent directory mounted, the next probe printed `no changes on probe`, no pull request, no container, volume or network left. The session was listed under Code in the Claude app while it ran.
-- `gh run cancel` a minute into the session: the step ended within 3 s, the last step printed `no changes on probe`, `claude agents --json --all` in the shared home lists nothing, and the session vanished from the app, which is `session`'s trap (`claude stop`, then `claude rm`) and what a killed container would not do.
-
-- With the plugins in `home/.claude/plugins/` and no seed, the same probe went green: `session … done` after 2.5 min, `no changes on probe`.
-- With `home/.claude/` shipped from git as in §3.2, the same probe went green again: `session … done` after 2.5 min, `no changes on probe`; `session` had adapted the fresh copy, the sandbox off and the registries on the container's paths.
-- The next run of the same probe, dispatched through the `cloud` function of §4, answered in 2 min 20 s and never declared `done`: `~/.claude/jobs/<id>/state.json` kept `working`, `testing in progress`, with the CLI's `tempo: idle` and nothing in flight, and `claude agents` listed it `status: idle, state: working`. `session` polled the state alone and would have held the job for its 1380 min; `claude stop` from the host ended it, `session … stopped`, `no changes on probe`. Hence the idle rule of §4.
-
-- The same `cloud.yml` template, the same session prompt and the same last step served a project of the other shape — no Postgres sidecar, an embedded SQLite-style store — with no edit. Its `docker-compose.yml` declared the app itself, not a sidecar, so the job's `docker compose up` had already brought it up (`…/api/health → {"ok":true}`) and the session left it alone and did not start Docker. It brought the rest up per the README, an install then the dev servers, the API and the web dev server as processes, the dev SQLite database seeded into a gitignored `./data/` with the tree clean; opened the web app in headless Chromium through the MCP, read the title, closed the tab; then stopped the dev server and confirmed its ports closed. One real commit came out of the run, a dependency install-scripts fix, which the always-run last step committed, pushed and opened the draft pull request for; the run's conclusion was success.
-- So the only thing that changes between a Postgres-sidecar project and a no-sidecar one is what `docker-compose.yml` declares — a sidecar, or the app, or nothing — and the prompt already adapts, the rest of the stack or the whole stack. The template, the prompt and the last step do not; per new project the cost is its own runner and its own `cloud.yml` `env:` block.
-
-Left: a `blocked` session answered from the app; the sessions were watched there, none was asked a question.
