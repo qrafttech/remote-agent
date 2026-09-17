@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow; GitHub queues each job to a free self-hosted runner on the VPS, a process that runs the job's steps on the host; two runners run two branches at once, each job a Compose project cloud-run-id with its own network, a Postgres container brought up by docker compose from the project's own docker-compose.yml and an agent container started by docker run, holding the claude session, the API and web dev server processes and headless Chromium, with no Docker socket; only the host's /opt/agent/home mount is shared; the job's last step, on the host, takes the containers down, commits, pushes the branch and opens a draft PR with GITHUB_TOKEN; the Claude app reaches either session over Remote Control.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow. GitHub only dispatches the run, queues the job, holds the secrets and token, and receives the pushed branch and draft PR — nothing runs in GitHub's cloud. All compute runs on the VPS host: the self-hosted runner is a process on the host that runs the job's steps, and docker compose, the agent container, the claude session, the app processes and headless Chromium all execute there. GitHub queues each job to a free runner, one per project repository. Two runners serve two projects of different shapes at once. The left job is a project with a Postgres sidecar: docker compose brings the Postgres container up from the project's own docker-compose.yml, and the agent container, started by docker run on the same network, holds the claude session plus the API, web dev server and headless Chromium as processes — the rest of the stack. The right job is a project with no database sidecar and an embedded SQLite store: there is no database container, only the agent container, in which the session brings the whole stack up as processes — API, web dev server, headless Chromium — with the store a file in the checkout. Neither agent container has a Docker socket, a key or a token that can push. Only the host's /opt/agent/home mount and the runner pool are shared. The job's last step, on the host, takes the containers down, commits, pushes the branch and opens a draft PR with GITHUB_TOKEN. The Claude app reaches either session over Remote Control.">
 <style>
 :root{--bg:#F4F6F3;--surface:#FFFFFF;--band:#EBEEEA;--ink:#1B2126;--muted:#5C676D;--line:#B4BCB8;--accent:#1A6E7A;--accent-soft:#DDEFF1}
 @media (prefers-color-scheme:dark){:root{--bg:#14191C;--surface:#1E2528;--band:#191F22;--ink:#E3E8E5;--muted:#9AA5A9;--line:#3B464B;--accent:#62C6D1;--accent-soft:#17333A}}
@@ -39,37 +39,36 @@
   <rect class="box" x="24" y="70" width="592" height="28" rx="4"/>
   <text class="m" x="36" y="88">gh workflow run cloud --ref feat/x -f prompt="…" <tspan class="a">= cloud feat/x "…"</tspan></text>
   <text class="s" x="604" y="88" text-anchor="end">workflow dispatch</text>
-  <text class="s" x="270" y="131">dispatches cloud.yml</text>
+  <text class="s" x="270" y="131">dispatches each project's cloud.yml</text>
 
   <rect class="band" x="12" y="136" width="616" height="112" rx="6"/>
-  <text class="eb" x="24" y="155">GitHub · project repository</text>
+  <text class="eb" x="24" y="155">GitHub · dispatch · queue · token · draft PR — no compute runs here</text>
   <rect class="box" x="24" y="164" width="300" height="72" rx="4"/>
-  <text class="t b" x="36" y="184">branches feat/x, feat/y</text>
+  <text class="t b" x="36" y="184">two project repositories</text>
   <text class="m" x="36" y="202">.github/workflows/cloud.yml</text>
-  <text class="s" x="36" y="222">one job per dispatch, queued to the runner pool</text>
+  <text class="s" x="36" y="222">same template · one job per dispatch → runner pool</text>
   <rect class="box" x="344" y="164" width="272" height="72" rx="4"/>
   <text class="t b" x="356" y="184">draft pull requests</text>
   <text class="s" x="356" y="202">one per branch · branch pushed by the last step</text>
   <text class="s" x="356" y="218">opened with the job's GITHUB_TOKEN</text>
-  <text class="s" x="70" y="272">queues each job</text>
-  <text class="s" x="70" y="286">to a free runner</text>
+  <text class="s" x="70" y="272">queues each job to a</text>
+  <text class="s" x="70" y="286">runner process on the host</text>
   <text class="s a" x="590" y="272" text-anchor="end">each job: push · draft PR</text>
   <text class="m" x="590" y="286" text-anchor="end">GITHUB_TOKEN</text>
 
   <rect class="band" x="12" y="288" width="616" height="553" rx="6"/>
-  <text class="eb" x="320" y="307" text-anchor="middle">VPS · shared Debian box, Docker · runner pool</text>
+  <text class="eb" x="320" y="307" text-anchor="middle">VPS · the host — every job step, container and process runs here, not in GitHub</text>
 
   <rect class="box" x="24" y="316" width="292" height="395" rx="4"/>
   <text class="t b" x="36" y="336">runner 1</text>
   <text class="s" x="304" y="331" text-anchor="end">systemd service · one job at a time</text>
   <text class="s" x="304" y="344" text-anchor="end">runs the job's steps on the host</text>
   <rect class="group" x="36" y="356" width="268" height="319" rx="4"/>
-  <text class="eb" x="48" y="374">job · feat/x</text>
-  <text class="s" x="292" y="374" text-anchor="end">Compose project cloud-&lt;run id&gt;</text>
+  <text class="eb" x="48" y="374">job · project with a Postgres sidecar</text>
   <rect class="box" x="48" y="386" width="244" height="64" rx="4"/>
   <text class="t b" x="56" y="402">postgres</text>
-  <text class="s" x="116" y="402">docker compose up</text>
-  <text class="s" x="56" y="416">from docker-compose.yml as is</text>
+  <text class="s" x="118" y="402">· the database sidecar</text>
+  <text class="s" x="56" y="416">docker compose up, from docker-compose.yml</text>
   <text class="s" x="56" y="429">health-checked · hostname postgres</text>
   <text class="s" x="56" y="442">no published ports</text>
   <line class="ln" x1="170" y1="468" x2="170" y2="452" marker-end="url(#ak)"/>
@@ -77,18 +76,18 @@
   <text class="t b" x="56" y="486">agent container · docker run</text>
   <text class="s" x="56" y="500">checkout feat/x · unprivileged user</text>
   <text class="s" x="56" y="513">no Docker socket</text>
-  <text class="eb" x="56" y="530">processes, not containers</text>
+  <text class="eb" x="56" y="530">processes · the rest of the stack</text>
   <rect class="soft" x="56" y="537" width="228" height="28" rx="3"/>
   <text class="m" x="64" y="549">claude --bg --remote-control</text>
   <text class="s" x="64" y="560">the session, on feat/x</text>
   <rect class="box" x="56" y="569" width="228" height="28" rx="3"/>
-  <text class="m" x="64" y="581">nest start --watch</text>
-  <text class="s" x="64" y="592">API · from the repo's instructions</text>
+  <text class="t b" x="64" y="581">API server</text>
+  <text class="s" x="64" y="592">a process · from the repo's instructions</text>
   <rect class="box" x="56" y="601" width="228" height="28" rx="3"/>
-  <text class="m" x="64" y="613">expo start --web</text>
-  <text class="s" x="64" y="624">web dev server</text>
+  <text class="t b" x="64" y="613">web dev server</text>
+  <text class="s" x="64" y="624">a process · from the repo's instructions</text>
   <rect class="box" x="56" y="633" width="228" height="28" rx="3"/>
-  <text class="m" x="64" y="645">chromium --headless</text>
+  <text class="t b" x="64" y="645">headless Chromium</text>
   <text class="s" x="64" y="656">via the chrome-devtools MCP</text>
   <text class="eb" x="36" y="690">last step · on the host</text>
   <text class="s" x="36" y="703">compose down · commit · push · draft PR</text>
@@ -98,32 +97,28 @@
   <text class="s" x="604" y="331" text-anchor="end">systemd service · one job at a time</text>
   <text class="s" x="604" y="344" text-anchor="end">runs the job's steps on the host</text>
   <rect class="group" x="336" y="356" width="268" height="319" rx="4"/>
-  <text class="eb" x="348" y="374">job · feat/y</text>
-  <text class="s" x="592" y="374" text-anchor="end">Compose project cloud-&lt;run id&gt;</text>
-  <rect class="box" x="348" y="386" width="244" height="64" rx="4"/>
-  <text class="t b" x="356" y="402">postgres</text>
-  <text class="s" x="416" y="402">docker compose up</text>
-  <text class="s" x="356" y="416">from docker-compose.yml as is</text>
-  <text class="s" x="356" y="429">health-checked · hostname postgres</text>
-  <text class="s" x="356" y="442">no published ports</text>
-  <line class="ln" x1="470" y1="468" x2="470" y2="452" marker-end="url(#ak)"/>
-  <rect class="box hot" x="348" y="468" width="244" height="203" rx="4"/>
-  <text class="t b" x="356" y="486">agent container · docker run</text>
-  <text class="s" x="356" y="500">checkout feat/y · unprivileged user</text>
-  <text class="s" x="356" y="513">no Docker socket</text>
-  <text class="eb" x="356" y="530">processes, not containers</text>
-  <rect class="soft" x="356" y="537" width="228" height="28" rx="3"/>
-  <text class="m" x="364" y="549">claude --bg --remote-control</text>
-  <text class="s" x="364" y="560">the session, on feat/y</text>
-  <rect class="box" x="356" y="569" width="228" height="28" rx="3"/>
-  <text class="m" x="364" y="581">nest start --watch</text>
-  <text class="s" x="364" y="592">API · from the repo's instructions</text>
-  <rect class="box" x="356" y="601" width="228" height="28" rx="3"/>
-  <text class="m" x="364" y="613">expo start --web</text>
-  <text class="s" x="364" y="624">web dev server</text>
-  <rect class="box" x="356" y="633" width="228" height="28" rx="3"/>
-  <text class="m" x="364" y="645">chromium --headless</text>
-  <text class="s" x="364" y="656">via the chrome-devtools MCP</text>
+  <text class="eb" x="348" y="374">job · project with no database sidecar</text>
+  <rect class="box hot" x="348" y="386" width="244" height="285" rx="4"/>
+  <text class="t b" x="356" y="404">agent container · docker run</text>
+  <text class="s" x="356" y="418">checkout feat/y · unprivileged user</text>
+  <text class="s" x="356" y="431">no Docker socket · no database container</text>
+  <text class="eb" x="356" y="448">processes · the whole stack</text>
+  <rect class="soft" x="356" y="455" width="228" height="28" rx="3"/>
+  <text class="m" x="364" y="467">claude --bg --remote-control</text>
+  <text class="s" x="364" y="478">the session, on feat/y</text>
+  <rect class="box" x="356" y="487" width="228" height="28" rx="3"/>
+  <text class="t b" x="364" y="499">API server</text>
+  <text class="s" x="364" y="510">a process · from the repo's instructions</text>
+  <rect class="box" x="356" y="519" width="228" height="28" rx="3"/>
+  <text class="t b" x="364" y="531">web dev server</text>
+  <text class="s" x="364" y="542">a process · from the repo's instructions</text>
+  <rect class="box" x="356" y="551" width="228" height="28" rx="3"/>
+  <text class="t b" x="364" y="563">headless Chromium</text>
+  <text class="s" x="364" y="574">via the chrome-devtools MCP</text>
+  <rect class="box" x="356" y="583" width="228" height="28" rx="3"/>
+  <text class="t b" x="364" y="595">embedded SQLite store</text>
+  <text class="s" x="364" y="606">a file in the checkout · no container</text>
+  <text class="s" x="356" y="631">the session brought the whole stack up</text>
   <text class="eb" x="336" y="690">last step · on the host</text>
   <text class="s" x="336" y="703">compose down · commit · push · draft PR</text>
 
