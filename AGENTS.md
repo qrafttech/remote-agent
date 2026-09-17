@@ -54,6 +54,7 @@ Runs do not collide: each job has its own Compose project, network, volumes and 
 
 1. **Adapt the mirrored setup** (every start, since the sync of README §3.2 restores the client's copy):
    - `settings.json`: `sandbox.enabled` forced to `false`, `hooks` and `statusLine` deleted (they name commands of the client, absent here). Everything else applies as on the client, `permissions.ask` included.
+   - `~/.claude.json`: the checkout's entry gains `hasTrustDialogAccepted` and `enableAllProjectMcpServers`. The trust and project-MCP dialogs would otherwise suspend the first run of a repository on a runner, with no one there to answer. Enabling the project's `.mcp.json` servers adds no surface the session lacks: it already runs arbitrary commands in the checkout with `--permission-mode auto`.
    - `plugins/known_marketplaces.json` and `plugins/installed_plugins.json`: every absolute `…/.claude/plugins/` path rewritten to this home's.
    - The chrome-devtools MCP registered (`claude mcp add --scope user … --executablePath /usr/local/bin/chromium`) unless already present.
 2. **Core dumps off** (`ulimit -c 0`): a crashing child must leave nothing for the last step's `git add -A`.
@@ -129,6 +130,7 @@ Probe runs (`Bring the stack up, open the web app in Chrome, report document.tit
 - `gh run cancel` a minute in: the step ended within 3 s, `claude agents --json --all` in the shared home lists nothing, and the session vanished from the app — which is `session`'s trap at work, and what a killed container would not do.
 - With `home/.claude/` shipped from git as in README §3.2, the probe went green: `session … done` after 2.5 min; `session` had adapted the fresh copy, sandbox off and registries on the container's paths.
 - One probe answered in 2 min 20 s and never declared `done`: its `state.json` kept `working` while the CLI listed it `status: idle` with nothing in flight. Polling the state alone would have held the job for its 1380 minutes — hence the idle rule.
+- On a repository declaring `.mcp.json` servers, the first run sat suspended on the workspace-trust dialog, with the project-MCP one behind it — the old open question of workspace trust on the real host, settled: `session` now writes both answers into `~/.claude.json` before launching.
 - The same template, prompt and last step served a project of the other shape — no Postgres sidecar, an embedded SQLite-style store — with no edit. Its `docker-compose.yml` declared the app itself, which the job had already brought up; the session left it alone, brought the rest up itself, verified in Chromium, stopped its servers, and its one real commit came back as a draft pull request. So the only thing that changes between project shapes is what `docker-compose.yml` declares; the template, the prompt and the last step do not.
 
 Left: a `blocked` session answered from the app — the sessions were watched there, none was asked a question.

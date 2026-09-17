@@ -2,9 +2,11 @@
 # session <name> <prompt>: the one step of a run, inside the job's container, in
 # the checkout. Turn the sandbox off (the container is the boundary; on Linux the
 # sandbox would put every command in its own network namespace), drop the client's
-# hooks and status line (commands of the client, absent here), point the mirrored
-# plugin registries at this home instead of the client's, register the
-# chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
+# hooks and status line (commands of the client, absent here), pre-trust the
+# checkout and enable its .mcp.json servers (no one is there to answer the
+# dialogs), point the mirrored plugin registries at this home instead of the
+# client's, register the chrome-devtools MCP, launch claude --bg with Remote
+# Control under <name>, poll
 # until the session is neither working nor blocked, or has sat idle while saying
 # working, its turn over. Core dumps off, so a crashing
 # child leaves nothing for the last step's git add -A. On any exit, SIGTERM
@@ -27,6 +29,7 @@ finish() {
 }
 
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};delete s.hooks;delete s.statusLine;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
+node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};const t=(s.projects??={})[process.cwd()]??={};t.hasTrustDialogAccepted=true;t.enableAllProjectMcpServers=true;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
 node -e 'const fs=require("fs"),d=process.env.HOME+"/.claude/plugins/";for(const f of ["known_marketplaces.json","installed_plugins.json"])if(fs.existsSync(d+f))fs.writeFileSync(d+f,fs.readFileSync(d+f,"utf8").replace(/"\/[^"]*\/\.claude\/plugins\//g,"\""+d))'
 claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
 trap finish EXIT
