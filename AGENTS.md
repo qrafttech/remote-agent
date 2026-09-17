@@ -54,6 +54,7 @@ Runs do not collide: each job has its own Compose project, network, volumes and 
 
 1. **Adapt the mirrored setup** (every start, since the sync of README §3.2 restores the client's copy):
    - `settings.json`: `sandbox.enabled` forced to `false`, `hooks` and `statusLine` deleted (they name commands of the client, absent here). Everything else applies as on the client, `permissions.ask` included.
+   - `~/.claude.json`: the checkout's entry gains `hasTrustDialogAccepted` and `enableAllProjectMcpServers`. The trust and project-MCP dialogs would otherwise suspend the first run of a repository on a runner, with no one there to answer. Enabling the project's `.mcp.json` servers adds no surface the session lacks: it already runs arbitrary commands in the checkout with `--permission-mode auto`.
    - `plugins/known_marketplaces.json` and `plugins/installed_plugins.json`: every absolute `…/.claude/plugins/` path rewritten to this home's.
    - The chrome-devtools MCP registered (`claude mcp add --scope user … --executablePath /usr/local/bin/chromium`) unless already present.
 2. **Core dumps off** (`ulimit -c 0`): a crashing child must leave nothing for the last step's `git add -A`.
