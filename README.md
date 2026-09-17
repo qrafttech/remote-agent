@@ -22,7 +22,7 @@ Why a host and not a Claude Code cloud session: a session that verifies its work
 On the host, one user, `agent`, uid 1000 (the image's user), in the `docker` group, the one you ssh as. It owns the runners and one directory that knows nothing about any project:
 
 ```
-/opt/agent/home/       the agent's $HOME in the container, shared by every run: the login, plus settings.json, rules/, skills/ and plugins/ mirrored from the client
+/opt/agent/home/       the agent's $HOME in the container, shared by every run: the login, plus the client's `~/.claude` at `HEAD` and its `plugins/`
 ~/runner-<repo>-<n>/   one GitHub Actions runner, a systemd service; one per concurrent run, per repository; its _work/ holds the checkout during a run
 ```
 
@@ -73,9 +73,10 @@ The runners appear under Settings → Actions → Runners, idle; each starts wit
 ## 3. What only hands can do
 
 1. **Login**, once per host: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude'`, `/login`, the URL in a browser, the code back. The credentials land in `home/.claude/.credentials.json`, `-rw-------`, and stay there; never copy that file. Keep `ANTHROPIC_API_KEY` unset: Remote Control needs the subscription.
-2. **Your Claude setup**, once and whenever it changes: `settings.json`, `rules/`, `skills/` and the plugins (`plugins/known_marketplaces.json`, `installed_plugins.json`, `marketplaces/`, `cache/`) into `home/.claude/`; `enabledPlugins` in that `settings.json` says which plugins are on. Nothing else under `home/.claude/` is touched, the login in particular. The copy is never edited by hand: every session start adapts it (§7), a session may update a marketplace, and the next sync puts both back.
+2. **Your Claude setup**, once and whenever it changes: the committed tree of `~/.claude` (`settings.json`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `agents/`), and `plugins/` as is, into `home/.claude/`; `enabledPlugins` in that `settings.json` says which plugins are on. What is not committed does not travel, so commit first. Nothing else under `home/.claude/` is touched, the login in particular. The copy is never edited by hand: every session start adapts it (§7), a session may update a marketplace, and the next sync puts both back.
    ```bash
-   rsync -a --delete --include=settings.json --include='/rules/***' --include='/skills/***' --include=/plugins/ --include=/plugins/known_marketplaces.json --include=/plugins/installed_plugins.json --include='/plugins/marketplaces/***' --include='/plugins/cache/***' --exclude='*' ~/.claude/ agent@vps:/opt/agent/home/.claude/
+   git -C ~/.claude archive HEAD | ssh agent@vps "cd /opt/agent/home/.claude && rm -rf $(git -C ~/.claude ls-tree --name-only HEAD | xargs) && tar x"
+   rsync -a --delete ~/.claude/plugins/ agent@vps:/opt/agent/home/.claude/plugins/
    ```
 3. **The project's workflow**, once per project: `workflow.yml` from here at `.github/workflows/cloud.yml`, its `env:` filled with the keys of the project's `.env.example` files, each service of `docker-compose.yml` at its service name (`postgres:5432`, not `localhost`). Dev values go in the file; anything that must not be in the tree is a repository secret, `gh secret set NAME`, read as `${{ secrets.NAME }}`. Dev credentials only. The workflow must be on `main` for `gh workflow run` to find it, and on the branch it runs.
 4. **The repository's settings**, once per project: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests", on. Protect `main`, so the job's token can only ever add a branch.
@@ -124,7 +125,7 @@ A session's own screen is in the Claude app; `claude logs <id>` inside the conta
 
 - **Claude Code, pnpm, the MCP, `session`**: change the `ARG` in the `Dockerfile` or the script, `bash test.sh` and `bash test.sh image`, push to `main`; the next job pulls the new image. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. That run is the only test of the job's network, Chromium, Remote Control, the plugins and the workspace trust on the real host. `session` reads `backgrounded · <id>` and the `working`/`blocked` states from the CLI, and fails loudly after three polls when they change, rather than reporting no changes.
 - **Docker, Compose, `git`, `jq`, `gh`**: `apt upgrade`, as root. **The runners** update themselves; `./config.sh remove --token <token>` unregisters one.
-- **Your Claude setup**: the `rsync` of §3.2. Every session start also adapts the mirrored copy: in `settings.json`, the sandbox off, `hooks` and `statusLine` dropped since they name commands of the client, the chrome-devtools MCP registered with the image's Chromium; in the two plugin registries, the client's `~/.claude/plugins/` paths rewritten to the container's. Everything else applies as on the client, `permissions.ask` included: a rule that prompts on the client prompts in the app.
+- **Your Claude setup**: the two lines of §3.2. Every session start also adapts the mirrored copy: in `settings.json`, the sandbox off, `hooks` and `statusLine` dropped since they name commands of the client, the chrome-devtools MCP registered with the image's Chromium; in the two plugin registries, the client's `~/.claude/plugins/` paths rewritten to the container's. Everything else applies as on the client, `permissions.ask` included: a rule that prompts on the client prompts in the app.
 - **Rotate the login**: `/logout` then `/login` as in §3.1, twice a year, and after any doubt about the box.
 
 ## 8. What the container has and never has

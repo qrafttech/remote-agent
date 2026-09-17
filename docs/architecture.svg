@@ -134,7 +134,7 @@
   <line class="ln" x1="562" y1="751" x2="562" y2="727"/>
   <rect class="box" x="24" y="751" width="592" height="36" rx="4"/>
   <text class="m" x="32" y="766">/opt/agent/home</text>
-  <text class="s" x="32" y="780">rw · agent $HOME: login · settings · rules · skills · plugins</text>
+  <text class="s" x="32" y="780">rw · agent $HOME: login · ~/.claude at HEAD, from git · plugins</text>
   <text class="s" x="24" y="804">only shared: this host mount and the runner pool</text>
   <text class="s" x="24" y="817">no agent container holds a key or token that can push;</text>
   <text class="s" x="24" y="830">the job's last step, on the host, pushes after the session</text>
