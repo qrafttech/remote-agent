@@ -39,8 +39,7 @@ jobs:
           fi
           exec docker run --rm --init --pull always --name "$run" $network \
             $(jq -r 'del(.PROMPT, .CONFIG) | keys[] | "-e " + .' <<<"$CONFIG") \
-            -e CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/seed -v /opt/agent/home:/home/agent -v /opt/agent/seed:/opt/seed:ro \
-            -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
+            -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
       - if: always()
         env:
           PROMPT: ${{ inputs.prompt }}

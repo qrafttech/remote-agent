@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow; GitHub queues each job to a free self-hosted runner on the VPS, a process that runs the job's steps on the host; two runners run two branches at once, each job a Compose project cloud-run-id with its own network, a Postgres container brought up by docker compose from the project's own docker-compose.yml and an agent container started by docker run, holding the claude session, the API and web dev server processes and headless Chromium, with no Docker socket; only the host's /opt/agent/home and /opt/agent/seed mounts are shared; the job's last step, on the host, takes the containers down, commits, pushes the branch and opens a draft PR with GITHUB_TOKEN; the Claude app reaches either session over Remote Control.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow; GitHub queues each job to a free self-hosted runner on the VPS, a process that runs the job's steps on the host; two runners run two branches at once, each job a Compose project cloud-run-id with its own network, a Postgres container brought up by docker compose from the project's own docker-compose.yml and an agent container started by docker run, holding the claude session, the API and web dev server processes and headless Chromium, with no Docker socket; only the host's /opt/agent/home mount is shared; the job's last step, on the host, takes the containers down, commits, pushes the branch and opens a draft PR with GITHUB_TOKEN; the Claude app reaches either session over Remote Control.">
 <style>
 :root{--bg:#F4F6F3;--surface:#FFFFFF;--band:#EBEEEA;--ink:#1B2126;--muted:#5C676D;--line:#B4BCB8;--accent:#1A6E7A;--accent-soft:#DDEFF1}
 @media (prefers-color-scheme:dark){:root{--bg:#14191C;--surface:#1E2528;--band:#191F22;--ink:#E3E8E5;--muted:#9AA5A9;--line:#3B464B;--accent:#62C6D1;--accent-soft:#17333A}}
@@ -132,13 +132,10 @@
   <line class="ln" x1="562" y1="727" x2="562" y2="673" marker-end="url(#ak)"/>
   <line class="ln" x1="262" y1="751" x2="262" y2="727"/>
   <line class="ln" x1="562" y1="751" x2="562" y2="727"/>
-  <rect class="box" x="24" y="751" width="292" height="36" rx="4"/>
+  <rect class="box" x="24" y="751" width="592" height="36" rx="4"/>
   <text class="m" x="32" y="766">/opt/agent/home</text>
-  <text class="s" x="32" y="780">rw · agent $HOME: login · settings · rules · skills</text>
-  <rect class="box" x="324" y="751" width="292" height="36" rx="4"/>
-  <text class="m" x="332" y="766">/opt/agent/seed</text>
-  <text class="s" x="332" y="780">ro · plugins</text>
-  <text class="s" x="24" y="804">only shared: these two host mounts and the runner pool</text>
+  <text class="s" x="32" y="780">rw · agent $HOME: login · settings · rules · skills · plugins</text>
+  <text class="s" x="24" y="804">only shared: this host mount and the runner pool</text>
   <text class="s" x="24" y="817">no agent container holds a key or token that can push;</text>
   <text class="s" x="24" y="830">the job's last step, on the host, pushes after the session</text>
 
