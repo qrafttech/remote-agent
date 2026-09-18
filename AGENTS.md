@@ -57,9 +57,10 @@ Runs do not collide: each job has its own Compose project, network, volumes and 
    - `plugins/known_marketplaces.json` and `plugins/installed_plugins.json`: every absolute `…/.claude/plugins/` path rewritten to this home's.
    - The chrome-devtools MCP registered (`claude mcp add --scope user … --executablePath /usr/local/bin/chromium`) unless already present.
 2. **Core dumps off** (`ulimit -c 0`): a crashing child must leave nothing for the last step's `git add -A`.
-3. **Launch**: `claude --bg --name <name> --remote-control <name> --permission-mode auto` with the composed prompt. The id is read from the CLI's `backgrounded · <id>` line; if none appears, the step fails with `no session id`.
-4. **Poll** `claude agents --json --all` every 30 s (env `POLL` overrides). The **state** is the session's own word (`working`, `blocked`, `done`, …); the **status** is the CLI's (`running`, `idle`).
-5. **On any exit**, SIGTERM included: stop the session if it is still going (`claude stop`), then `claude rm`. Committing what it left is the workflow's job.
+3. **Login check**: `claude auth status --json` must report `loggedIn: true`; otherwise the step fails with `not logged in` before any launch. A session launched without a login only says `Login expired`, is listed `blocked`, and would hold the job for its whole timeout.
+4. **Launch**: `claude --bg --name <name> --remote-control <name> --permission-mode auto` with the composed prompt. The id is read from the CLI's `backgrounded · <id>` line; if none appears, the step fails with `no session id`.
+5. **Poll** `claude agents --json --all` every 30 s (env `POLL` overrides). The **state** is the session's own word (`working`, `blocked`, `done`, …); the **status** is the CLI's (`running`, `idle`).
+6. **On any exit**, SIGTERM included: stop the session if it is still going (`claude stop`), then `claude rm`. Committing what it left is the workflow's job.
 
 The prompt is the user's, preceded by three lines:
 
@@ -84,6 +85,7 @@ One occurrence of missing/error resets on the next good listing; so does one idl
 ### Every message `session` prints
 
 - `usage: session <name> <prompt>` — wrong arity, exit 1.
+- `not logged in: <home>/.claude holds no valid login; log in on the host, README §3.1` — `claude auth status` reports no login, exit 1, nothing launched.
 - `no session id` — `claude --bg` produced no `backgrounded · <id>` line, exit 1.
 - `session <id> running as <name>` — the launch line.
 - `session <id> <state>` — the session ended with that state, exit 0.

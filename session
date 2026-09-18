@@ -4,7 +4,9 @@
 # sandbox would put every command in its own network namespace), drop the client's
 # hooks and status line (commands of the client, absent here), point the mirrored
 # plugin registries at this home instead of the client's, register the
-# chrome-devtools MCP, launch claude --bg with Remote Control under <name>, poll
+# chrome-devtools MCP, refuse when the mounted home holds no login (the session
+# would only say "Login expired" and sit blocked for the job's whole timeout),
+# launch claude --bg with Remote Control under <name>, poll
 # until the session is neither working nor blocked, or has sat idle while saying
 # working, its turn over. Core dumps off, so a crashing
 # child leaves nothing for the last step's git add -A. On any exit, SIGTERM
@@ -31,6 +33,8 @@ node -e 'const fs=require("fs"),d=process.env.HOME+"/.claude/plugins/";for(const
 claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
 trap finish EXIT
 trap 'exit 143' TERM INT
+claude auth status --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.exit(JSON.parse(s).loggedIn?0:1))' 2>/dev/null ||
+  { echo "not logged in: $HOME/.claude holds no valid login; log in on the host, README §3.1" >&2; exit 1; }
 stack="Bring the stack up yourself"
 [ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
 prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \

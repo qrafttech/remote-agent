@@ -56,7 +56,7 @@ The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qra
 
 ## 3. What only hands can do
 
-1. **Login**, once per host: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude'`, then `/login`. Credentials stay in `home/.claude/.credentials.json`; never copy that file. Keep `ANTHROPIC_API_KEY` unset: Remote Control needs the subscription.
+1. **Login**, once per host, then every 30 days: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude auth login'`, the URL in a browser, the code back. Verify: the same `docker run` without `-it`, `claude auth status`, must say `"loggedIn": true`. Credentials stay in `home/.claude/.credentials.json`; never copy that file. The refresh grant is capped at 30 days from the login; past it the file is emptied and a job dies at once with `not logged in`. Keep `ANTHROPIC_API_KEY` unset and never use `claude setup-token`: Remote Control needs the subscription login, and a setup-token cannot open one.
 2. **Your Claude setup**, at every change. Commit first — only the committed tree travels:
    ```bash
    git -C ~/.claude archive HEAD | ssh agent@vps "cd /opt/agent/home/.claude && rm -rf $(git -C ~/.claude ls-tree --name-only HEAD | xargs) && tar x"
@@ -75,12 +75,13 @@ gh workflow run cloud --ref feat/x -f prompt="Run the implement-loop skill again
 gh workflow run cloud --ref feat/x -f prompt="$(cat plan.md)"    # a file as the prompt
 ```
 
-Or as a shell function, from inside the project's checkout. On `main` it pushes HEAD to a new `cloud/<date>-<slug>` branch; on any other branch, the run continues that branch. A dirty tree is refused: what is not pushed does not travel. After a run, `git pull --rebase` before the next one.
+Or as a shell function, from inside the project's checkout. It asks the host for its login before pushing anything. On `main` it pushes HEAD to a new `cloud/<date>-<slug>` branch; on any other branch, the run continues that branch. A dirty tree is refused: what is not pushed does not travel. After a run, `git pull --rebase` before the next one.
 
 ```zsh
 cloud() {
   [ $# -ge 1 ] || { echo "usage: cloud <prompt...>" >&2; return 1; }
   [ -z "$(git status --porcelain)" ] || { echo "cloud: uncommitted changes; commit first, what is not pushed does not travel" >&2; return 1; }
+  ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude auth status' | grep -q '"loggedIn": true' || { echo "cloud: the host is not logged in; log in first, README §3.1" >&2; return 1; }
   local branch=$(git branch --show-current)
   if [ "$branch" = main ]; then
     branch="cloud/$(date +%m%d-%H%M)-$(printf '%s' "$*" | tr -cs 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40 | sed 's/-$//')"
@@ -117,4 +118,4 @@ The session's own screen is in the Claude app. `claude logs <id>` runs as `docke
 - **Claude Code, pnpm, the MCP, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
 - **Docker, Compose, `git`, `jq`, `gh`**: `apt upgrade`, as root. The runners update themselves.
 - **Your Claude setup**: the two lines of §3.2.
-- **Rotate the login**: `/logout` then `/login` as in §3.1 — twice a year, and after any doubt about the box.
+- **The login**: §3.1 again every 30 days, the refresh grant's cap; `claude auth logout` first after any doubt about the box.

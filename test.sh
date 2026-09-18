@@ -26,12 +26,13 @@ echo '{"a":1,"hooks":{"Stop":[]},"statusLine":{"type":"command","command":"x"}}'
 mkdir -p "$T/home/.claude/plugins"
 echo '{"m":{"installLocation":"/Users/me/.claude/plugins/marketplaces/m"}}' > "$T/home/.claude/plugins/known_marketplaces.json"
 echo '{"plugins":{"p@m":[{"installPath":"/Users/me/.claude/plugins/cache/m/p/1"}]}}' > "$T/home/.claude/plugins/installed_plugins.json"
-export HOME=$T/home STUBS=$T/stubs STUBLOG=$T/stub.log POLL=0.1 LC_ALL=C
+export HOME=$T/home STUBS=$T/stubs STUBLOG=$T/stub.log POLL=0.1 LC_ALL=C CLAUDE_AUTH='{"loggedIn":true,"authMethod":"claude.ai"}'
 cat > "$STUBS/claude" <<'EOF2'
 #!/usr/bin/env bash
 echo "claude $*" >> "$STUBLOG"
 case "$1" in
   agents) echo "${CLAUDE_AGENTS:-[]}" ;;
+  auth) echo "$CLAUDE_AUTH" ;;
   mcp) [ "$2" != get ] || [ -n "${MCP_PRESENT:-}" ] ;;
   --bg) printf '%s' "${@: -1}" > "$T/claude.prompt"; echo "corelimit $(ulimit -c)" >> "$STUBLOG"; echo "backgrounded · abc123 · x" ;;
 esac
@@ -72,4 +73,6 @@ pid=$!; until grep -q running "$T/term.out" 2>/dev/null; do sleep 0.1; done; kil
 check "SIGTERM (a cancelled job): the session is stopped at once, exit 143" '[ "$status" = 143 ] && grep -q "^claude stop abc123$" "$STUBLOG" && grep -q "^claude rm abc123$" "$STUBLOG"'
 
 o=$(session x 2>&1); check "one argument: usage" 'grep -q "^usage: session" <<<"$o"'
+: > "$STUBLOG"; o=$(CLAUDE_AUTH='{"loggedIn":false,"authMethod":"none"}' session app/feat/x x); status=$?
+check "no login in the home: refused before any launch, exit 1, README §3.1 named" '[ "$status" = 1 ] && grep -q "^not logged in: .*§3.1" <<<"$o" && ! grep -q "^claude --bg" "$STUBLOG" && ! grep -q "^claude rm" "$STUBLOG"'
 verdict session
