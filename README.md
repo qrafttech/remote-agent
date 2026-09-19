@@ -9,23 +9,24 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 | File | Does |
 | :- | :- |
 | `Dockerfile` | the image: Node, pnpm, Chromium, pinned Claude Code and MCP, `session` |
-| `session` | the run's one step in the container: adapt the setup, launch `claude --bg`, poll until it ends |
+| `session` | the run's one step in the container: adapt the setup, resume the branch's session or launch `claude --bg`, poll until it ends |
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml` |
 | `.github/workflows/image.yml` | builds and tests the image on every push to `main`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds and checks the pins |
 | `AGENTS.md` | what a project brings, the rules of this repository, and the reference: every step, state, message |
+| `skills/cloud/` | the `/cloud` skill: push, dispatch, watch, report — from a Claude session on the client |
 | `docs/` | the two figures |
 
 ## 1. Layout
 
-One host user, `agent`, uid 1000, in the `docker` group — the one you ssh as. It owns:
+One host user, `agent`, uid 1000, in the `docker` group — the one you ssh as; `vps` below is your ssh alias for the host, the one the `/cloud` skill uses too. It owns:
 
 ```
 /opt/agent/home/       the agent's $HOME in every container: the login, your ~/.claude at HEAD, its plugins/
 ~/runner-<repo>-<n>/   one Actions runner per concurrent run, per repository; a systemd service
 ```
 
-Each job gets its own network, sidecars and checkout. Only `home/` and the runners are shared.
+Each job gets its own network, sidecars and checkout. Only `home/` and the runners are shared. A run resumes the branch's session only from the runner whose checkout started it (`AGENTS.md`, "Anatomy of a run"): one runner per repository if every run is to be the previous one's next turn.
 
 ## 2. Install (once per host)
 
@@ -57,7 +58,7 @@ The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qra
 ## 3. What only hands can do
 
 1. **Login**, once per host, then every 30 days: `ssh -t agent@vps 'docker run --rm -it -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude auth login'`, the URL in a browser, the code back. Verify: the same `docker run` without `-it`, `claude auth status`, must say `"loggedIn": true`. Credentials stay in `home/.claude/.credentials.json`; never copy that file. The refresh grant is capped at 30 days from the login; past it the file is emptied and a job dies at once with `not logged in`. Keep `ANTHROPIC_API_KEY` unset and never use `claude setup-token`: Remote Control needs the subscription login, and a setup-token cannot open one.
-2. **Your Claude setup**, at every change. Commit first — only the committed tree travels:
+2. **Your Claude setup**, at every change. Commit first — only the committed tree travels. The `/cloud` skill is part of it: `ln -s ~/code/remote-agent/skills/cloud ~/.claude/skills/cloud`, committed as a link (it dangles on the host, where nothing dispatches):
    ```bash
    git -C ~/.claude archive HEAD | ssh agent@vps "cd /opt/agent/home/.claude && rm -rf $(git -C ~/.claude ls-tree --name-only HEAD | xargs) && tar x"
    rsync -a --delete ~/.claude/plugins/ agent@vps:/opt/agent/home/.claude/plugins/
@@ -73,24 +74,13 @@ The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qra
 ```bash
 gh workflow run cloud --ref feat/x -f prompt="Run the implement-loop skill against .claude/deliverable.md"
 gh workflow run cloud --ref feat/x -f prompt="$(cat plan.md)"    # a file as the prompt
+gh workflow run cloud --ref feat/x -f fresh=false                  # resume the branch's session: "Continue where you left off." (without any -f, gh asks interactively)
+gh workflow run cloud --ref feat/x -f fresh=true -f prompt="…"     # a new session although one is named after the branch
 ```
 
-Or as a shell function, from inside the project's checkout. It asks the host for its login before pushing anything. On `main` it pushes HEAD to a new `cloud/<date>-<slug>` branch; on any other branch, the run continues that branch. A dirty tree is refused: what is not pushed does not travel. After a run, `git pull --rebase` before the next one.
+Or, from a Claude session in the project's checkout, `/cloud <prompt>` — the `cloud` skill of this repository (`skills/cloud`, linked into `~/.claude/skills/`). It refuses a dirty tree (what is not pushed does not travel), checks the host's login, lists the sessions the host already holds for this branch, pushes, dispatches, watches the run and reports the pull request. On `main` it pushes HEAD to a new `cloud/<date>-<slug>` branch; on any other branch, the run continues that branch.
 
-```zsh
-cloud() {
-  [ $# -ge 1 ] || { echo "usage: cloud <prompt...>" >&2; return 1; }
-  [ -z "$(git status --porcelain)" ] || { echo "cloud: uncommitted changes; commit first, what is not pushed does not travel" >&2; return 1; }
-  ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude auth status' | grep -q '"loggedIn": true' || { echo "cloud: the host is not logged in; log in first, README §3.1" >&2; return 1; }
-  local branch=$(git branch --show-current)
-  if [ "$branch" = main ]; then
-    branch="cloud/$(date +%m%d-%H%M)-$(printf '%s' "$*" | tr -cs 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40 | sed 's/-$//')"
-  fi
-  git push -q origin "HEAD:refs/heads/$branch" || return 1
-  gh workflow run cloud --ref "$branch" -f prompt="$*"
-  echo "$branch"
-}
-```
+**Sessions are kept.** A run never removes its session: it stays listed on the host and in the Claude app, and the next run on the same branch resumes it — same ID, same context — with the new prompt as its next turn. `/cloud fresh <prompt>` (or `-f fresh=true`) starts a new one instead, leaving the old one listed; a resumed session re-reads its whole transcript first, so that is the choice for a long one. No prompt at all means `Continue where you left off.` To forget a session: `ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude rm <id>'`, by hand, never by the tooling.
 
 The session's prompt gets three preamble lines: it runs in its own container, the declared sidecars are already up (or it must bring the whole stack up), commit as you go and do not push. Exact wording in `AGENTS.md`.
 
@@ -100,7 +90,7 @@ Watch, answer or stop the run in the Claude app: **Code → `<repo>/<branch>`**.
 
 Nothing to do on the client. The last step always runs, even after a cancel or timeout: it tears the containers down, commits what the session left as `run: <branch>`, pushes, and opens a draft pull request — or leaves the existing one alone. No changes → no push: `no changes on <branch>` in the log. Then `git pull`, review, mark ready.
 
-To cancel: stop the session in the Claude app (seen within 30 s), or `gh run cancel <id>` — the last step still runs. A session blocked on an unanswered question holds its runner until the 23-hour timeout.
+To cancel: stop the session in the Claude app (seen within 30 s), or `gh run cancel <id>` — the last step still runs, and the session stays listed for the next run to resume. A session blocked on an unanswered question holds its runner until the 23-hour timeout.
 
 ## 6. Looking at the host
 

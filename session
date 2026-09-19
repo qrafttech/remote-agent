@@ -1,31 +1,34 @@
 #!/usr/bin/env bash
-# session <name> <prompt>: the one step of a run, inside the job's container, in
-# the checkout. Turn the sandbox off (the container is the boundary; on Linux the
-# sandbox would put every command in its own network namespace), drop the client's
-# hooks and status line (commands of the client, absent here), point the mirrored
-# plugin registries at this home instead of the client's, register the
-# chrome-devtools MCP, refuse when the mounted home holds no login (the session
+# session <name> <prompt> [fresh]: the one step of a run, inside the job's
+# container, in the checkout. Turn the sandbox off (the container is the boundary;
+# on Linux the sandbox would put every command in its own network namespace), drop
+# the client's hooks and status line (commands of the client, absent here), point
+# the mirrored plugin registries at this home instead of the client's, register
+# the chrome-devtools MCP, refuse when the mounted home holds no login (the session
 # would only say "Login expired" and sit blocked for the job's whole timeout),
-# launch claude --bg with Remote Control under <name>, poll
-# until the session is neither working nor blocked, or has sat idle while saying
-# working, its turn over. Core dumps off, so a crashing
-# child leaves nothing for the last step's git add -A. On any exit, SIGTERM
-# included, the session is stopped and removed; committing what it left is the
+# then resume the newest session already named <name> with the prompt, or launch
+# a new one when there is none or the third argument is "fresh"; Remote Control
+# under <name> either way. Poll until the session is neither working nor blocked,
+# or has sat idle while saying working, its turn over. Core dumps off, so a
+# crashing child leaves nothing for the last step's git add -A. On any exit,
+# SIGTERM included, the session is stopped if still going, never removed: it
+# stays listed for the next run to resume. Committing what it left is the
 # workflow's job.
 set -euo pipefail
-[ $# = 2 ] || { echo "usage: session <name> <prompt>" >&2; exit 1; }
+{ [ $# = 2 ] || { [ $# = 3 ] && [ "$3" = fresh ]; }; } || { echo "usage: session <name> <prompt> [fresh]" >&2; exit 1; }
 ulimit -c 0
 name=$1
 # The session's state and status per `claude agents`: the state is the session's own word (working, blocked, done...),
 # the status the CLI's (running, idle); missing when it is not listed, error when the listing fails.
 state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(x=>x.id===process.argv[1]);console.log(a?a.state+" "+(a.status||""):"missing")})' "$1" 2>/dev/null || echo error; }
-# Stop the session if it is still going, then forget it, whatever ends this script.
+# The session id of the newest session named <name> started in this checkout and not running, for claude --resume;
+# empty when there is none. Another checkout's session (another runner's) has its transcript there, not here;
+# a running one would only be copied.
+resumable() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).filter(x=>x.name===process.argv[1]&&x.cwd===process.cwd()&&x.status!=="running").sort((x,y)=>(y.startedAt||0)-(x.startedAt||0))[0];console.log(a?a.sessionId||"":"")})' "$1" 2>/dev/null || true; }
+# Stop the session if it is still going, whatever ends this script; it stays listed, the next run may resume it.
 finish() {
   trap - EXIT TERM INT
-  [ -z "${id:-}" ] || {
-    case $(state_of "$id") in working*|blocked*|error*) claude stop "$id" >/dev/null || true ;; esac
-    claude rm "$id" >/dev/null || true
-  }
+  [ -z "${id:-}" ] || case $(state_of "$id") in working*|blocked*|error*) claude stop "$id" >/dev/null || true ;; esac
 }
 
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};delete s.hooks;delete s.statusLine;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
@@ -40,10 +43,11 @@ stack="Bring the stack up yourself"
 prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \
   "$stack, from the repository's own instructions, inside this checkout; stop what you started before you finish." \
   "Commit your work on this branch as you go, with real messages; do not push, the workflow does." "" "$2")
-id=$(claude --bg --name "$name" --remote-control "$name" --permission-mode auto "$prompt" |
+resume=; [ $# = 3 ] || resume=$(resumable "$name")
+id=$(claude --bg ${resume:+--resume "$resume"} --name "$name" --remote-control "$name" --permission-mode auto "$prompt" |
      sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')
 [ -n "$id" ] || { echo "no session id" >&2; exit 1; }
-echo "session $id running as $name"
+echo "session $id ${resume:+resumed from $resume, }running as $name"
 strikes=0 idle=0
 while sleep "${POLL:-30}" & wait $!; do
   read -r state status < <(state_of "$id")

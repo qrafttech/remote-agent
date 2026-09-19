@@ -4,9 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       prompt:
-        description: What the session does
-        required: true
+        description: What the session does; a session already named after the branch is resumed with it
+        required: false
+        default: Continue where you left off.
         type: string
+      fresh:
+        description: Start a new session even when one is named after the branch
+        required: false
+        default: false
+        type: boolean
 
 concurrency: cloud-${{ github.ref }}
 
@@ -28,6 +34,7 @@ jobs:
           persist-credentials: false
       - env:
           PROMPT: ${{ inputs.prompt }}
+          FRESH: ${{ inputs.fresh }}
           CONFIG: ${{ toJSON(env) }}
         run: |
           run=cloud-$GITHUB_RUN_ID
@@ -38,8 +45,8 @@ jobs:
             network="--network ${run}_default"
           fi
           exec docker run --rm --init --pull always --name "$run" $network \
-            $(jq -r 'del(.PROMPT, .CONFIG) | keys[] | "-e " + .' <<<"$CONFIG") \
-            -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT"
+            $(jq -r 'del(.PROMPT, .FRESH, .CONFIG) | keys[] | "-e " + .' <<<"$CONFIG") \
+            -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT" $([ "$FRESH" != true ] || echo fresh)
       - if: always()
         env:
           PROMPT: ${{ inputs.prompt }}
