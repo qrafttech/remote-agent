@@ -27,7 +27,7 @@ ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/
 ```
 
 - No `"loggedIn": true` → stop: `the host is not logged in; log in first, README §3.1`.
-- Filter the listing on `name == "<repo>/<current>"` and print what is there, newest first: id, state, started (as an age). This is what the run will resume — on `main` there is never one, the run gets its own branch (§5).
+- Filter the listing on `name == "<repo>/<current>"` and print what is there, newest first: id, state, started (as an age). A session whose run is in progress right now shows `failed` from here (its process is in the job's container, out of this listing's sight) — check `gh run list --workflow cloud --branch <current>` before reading `failed` as dead; the same branch queues behind itself anyway. This is what the run will resume — on `main` there is never one, the run gets its own branch (§5).
 
 ## 3. **Decide** — the prompt
 

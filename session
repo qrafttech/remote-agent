@@ -24,7 +24,7 @@ state_of() { claude agents --json --all | node -e 'let s="";process.stdin.on("da
 # The session id of the newest session named <name> started in this checkout and not running, for claude --resume;
 # empty when there is none. Another checkout's session (another runner's) has its transcript there, not here;
 # a running one would only be copied.
-resumable() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).filter(x=>x.name===process.argv[1]&&x.cwd===process.cwd()&&x.status!=="running").sort((x,y)=>(y.startedAt||0)-(x.startedAt||0))[0];console.log(a?a.sessionId||"":"")})' "$1" 2>/dev/null || true; }
+resumable() { claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).filter(x=>x.name===process.argv[1]&&x.cwd===process.cwd()&&!["running","busy"].includes(x.status)).sort((x,y)=>(y.startedAt||0)-(x.startedAt||0))[0];console.log(a?a.sessionId||"":"")})' "$1" 2>/dev/null || true; }
 # Stop the session if it is still going, whatever ends this script; it stays listed, the next run may resume it.
 finish() {
   trap - EXIT TERM INT
