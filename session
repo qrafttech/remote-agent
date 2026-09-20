@@ -4,8 +4,9 @@
 # on Linux the sandbox would put every command in its own network namespace), drop
 # the client's hooks and status line (commands of the client, absent here), point
 # the mirrored plugin registries at this home instead of the client's, register
-# the chrome-devtools MCP, refuse when the mounted home holds no login (the session
-# would only say "Login expired" and sit blocked for the job's whole timeout),
+# the chrome-devtools MCP, link the image's gh extensions (gh stack) into this home,
+# refuse when the mounted home holds no login (the session would only say "Login
+# expired" and sit blocked for the job's whole timeout),
 # then resume the newest session already named <name> with the prompt, or launch
 # a new one when there is none or the third argument is "fresh"; Remote Control
 # under <name> either way. Poll until the session is neither working nor blocked,
@@ -34,6 +35,7 @@ finish() {
 node -e 'const fs=require("fs"),p=process.env.HOME+"/.claude/settings.json";const s=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{};s.sandbox={enabled:false};delete s.hooks;delete s.statusLine;fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n")'
 node -e 'const fs=require("fs"),d=process.env.HOME+"/.claude/plugins/";for(const f of ["known_marketplaces.json","installed_plugins.json"])if(fs.existsSync(d+f))fs.writeFileSync(d+f,fs.readFileSync(d+f,"utf8").replace(/"\/[^"]*\/\.claude\/plugins\//g,"\""+d))'
 claude mcp get chrome-devtools >/dev/null 2>&1 || claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium >/dev/null
+[ -e "$HOME/.local/share/gh/extensions" ] || [ -L "$HOME/.local/share/gh/extensions" ] || { mkdir -p "$HOME/.local/share/gh" && ln -s /opt/gh/extensions "$HOME/.local/share/gh/extensions"; }
 trap finish EXIT
 trap 'exit 143' TERM INT
 claude auth status --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.exit(JSON.parse(s).loggedIn?0:1))' 2>/dev/null ||
@@ -42,7 +44,7 @@ stack="Bring the stack up yourself"
 [ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
 prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \
   "$stack, from the repository's own instructions, inside this checkout; stop what you started before you finish." \
-  "Commit your work on this branch as you go, with real messages; do not push, the workflow does." "" "$2")
+  "Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself, as drafts, when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on the branch you leave checked out." "" "$2")
 resume=; [ $# = 3 ] || resume=$(resumable "$name")
 id=$(claude --bg ${resume:+--resume "$resume"} --name "$name" --remote-control "$name" --permission-mode auto "$prompt" |
      sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')

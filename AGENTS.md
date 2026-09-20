@@ -1,6 +1,6 @@
 # Remote agent host
 
-A GitHub Actions workflow runs a Claude Code session on a self-hosted runner, in a container from this repository's image, on the branch it is dispatched with, and pushes the result back as a draft pull request.
+A GitHub Actions workflow runs a Claude Code session on a self-hosted runner, in a container from this repository's image, on the branch it is dispatched with; the session pushes and opens pull requests itself, a stack included, and the job pushes whatever it left as a draft pull request.
 
 ## What a project brings
 
@@ -16,7 +16,8 @@ Everything else stays: `permissions`, `concurrency`, `timeout-minutes`, the chec
 
 ### What the run reads from the project
 
-- The branch as pushed to GitHub: the result comes back as commits on it, pushed with the job's token, with a draft pull request. What is not pushed does not travel: an ignored brief goes in the prompt, `-f prompt="$(cat plan.md)"`.
+- The branch as pushed to GitHub: the result comes back as commits on it, and as the pull requests the session opened — a stack included — plus a draft on the branch for anything it left unpushed. What is not pushed does not travel: an ignored brief goes in the prompt, `-f prompt="$(cat plan.md)"`.
+- The token, `CLOUD_TOKEN` of README §3.5: a fine-grained personal access token on the project's repository, *Contents* and *Pull requests* read and write. It is `GH_TOKEN` in the container and in the last step. Absent, `github.token` takes its place and everything still works, except that nothing the run pushes or opens triggers another workflow — no CI on its pull requests.
 - The prompt, from `gh workflow run cloud --ref <branch> -f prompt="…"`, or the `/cloud` skill on the client. Absent, `Continue where you left off.` — the input is optional because a run can be a session's next turn: a session already named `<repo>/<branch>` on the host is resumed with the prompt, unless `-f fresh=true`.
 - The repository settings of README §3.4: Actions may create pull requests; `main` protected.
 
@@ -41,9 +42,9 @@ job                                          steps on the host
 └─ docker compose down -v · commit · push · PR  the last step, on the host, always
 ```
 
-- **Checkout**: `actions/checkout` with `persist-credentials: false` — the checkout keeps no token.
+- **Checkout**: `actions/checkout` with `persist-credentials: false` — the checkout keeps no token; the container's `git` gets one from `gh auth git-credential` (`credential.helper` of the image) and `gh` from `GH_TOKEN`.
 - **Sidecars**: if `docker-compose.yml` exists, the job generates an override from `docker compose config --services` that resets every `ports:` (`{ports: !reset []}`, Compose ≥ 2.24), then `docker compose -p cloud-<run id> up -d --wait`. The network is `cloud-<run id>_default`. No file, no Compose, no sidecar.
-- **The agent container**: `docker run --rm --init --pull always --name cloud-<run id>`, on the job's network if there is one. It mounts `/opt/agent/home` at `/home/agent` and the checkout's **parent** directory at its host path, working directory the checkout. The job's `env:` is passed key by key (`jq` over `toJSON(env)`, with `PROMPT`, `FRESH` and `CONFIG` deleted — the prompt is not in the container's environment). Nothing else crosses.
+- **The agent container**: `docker run --rm --init --pull always --name cloud-<run id>`, on the job's network if there is one. It mounts `/opt/agent/home` at `/home/agent` and the checkout's **parent** directory at its host path, working directory the checkout. The job's `env:` is passed key by key (`jq` over `toJSON(env)`, with `PROMPT`, `FRESH`, `CONFIG` and `GH_TOKEN` deleted — the prompt is not in the container's environment), then `GH_TOKEN` on its own. Nothing else crosses.
 - **Why the parent directory**: pnpm keeps a store at the top of its mount. Mounted at the checkout, that store lands inside it — a probe committed `.pnpm-store/`, 83,410 files. At the parent, it sits next to the checkout, on the host, kept between runs.
 
 Runs do not collide: each job has its own Compose project, network, volumes and checkout, so `postgres:5432` is its own database in every container. The shared `home/` is safe the way several terminals on one machine are: one login serves any number of sessions, and session state is keyed by checkout path, the same on every run of a runner. That key is also the limit of a resume: a session, and whatever a skill keeps in the checkout's `.git/` between runs, belong to one runner's checkout, and a branch is not pinned to a runner. With several runners per repository a run resumes only when the same runner picks it; otherwise it starts new and says so. One runner per repository is the setting in which every run on a branch is the previous one's next turn. The container runs as uid 1000, the runner's user, so host and container both own what a run writes. The same branch queues behind itself (`concurrency: cloud-<ref>`); different branches run in parallel.
@@ -56,6 +57,7 @@ Runs do not collide: each job has its own Compose project, network, volumes and 
    - `settings.json`: `sandbox.enabled` forced to `false`, `hooks` and `statusLine` deleted (they name commands of the client, absent here). Everything else applies as on the client, `permissions.ask` included.
    - `plugins/known_marketplaces.json` and `plugins/installed_plugins.json`: every absolute `…/.claude/plugins/` path rewritten to this home's.
    - The chrome-devtools MCP registered (`claude mcp add --scope user … --executablePath /usr/local/bin/chromium`) unless already present.
+   - `~/.local/share/gh/extensions` linked to `/opt/gh/extensions` of the image, where `gh stack` is baked at its pinned version, unless something is already there. That directory is root's: `gh extension install` and `upgrade` are refused in the container; the image's set is the set.
 2. **Core dumps off** (`ulimit -c 0`): a crashing child must leave nothing for the last step's `git add -A`.
 3. **Login check**: `claude auth status --json` must report `loggedIn: true`; otherwise the step fails with `not logged in` before any launch. A session launched without a login only says `Login expired`, is listed `blocked`, and would hold the job for its whole timeout.
 4. **Resume or launch**: unless the third argument is `fresh`, `claude agents --json --all` is searched for sessions named `<name>` whose `cwd` is this checkout and whose status is neither `running` nor `busy` (the CLI's word for a turn in flight, seen on the real host); the newest by `startedAt` gives `--resume <sessionId>`. A session of another checkout — another runner's — has its transcript there, not here, so a run picked up by the other runner starts a new session and says so; a running one would only be copied by `--resume`, so it is skipped. Then `claude --bg [--resume <sessionId>] --name <name> --remote-control <name> --permission-mode auto` with the composed prompt: a resumed session continues under its same ID with the prompt as its next turn, a new one starts. The id is read from the CLI's `backgrounded · <id>` line; if none appears, the step fails with `no session id`.
@@ -66,7 +68,7 @@ The prompt is the user's, preceded by three lines:
 
 > This is a run of `<repo>` in its own container, and the app's configuration is in your environment.
 > The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself, from the repository's own instructions, inside this checkout; stop what you started before you finish.
-> Commit your work on this branch as you go, with real messages; do not push, the workflow does.
+> Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on this branch.
 
 A repository without `docker-compose.yml` gets "Bring the stack up yourself" in place of the second line's first clause.
 
@@ -98,20 +100,20 @@ Runs `if: always()` — after a session that ended, was stopped in the app, canc
 
 1. `docker rm -f cloud-<run id>` — removes the agent container if a cancel left it.
 2. `docker compose -p cloud-<run id> down -v` — sidecars and volumes gone (skipped without a compose file).
-3. `git add -A` excluding `*.log`, `*.tmp`, `*.pid`; if anything is staged, commit as `run: <branch>` (author `agent <agent@cloud>`).
+3. `git add -A` excluding `*.log`, `*.tmp`, `*.pid`; if anything is staged, commit as `run: <branch>` (author `agent <agent@cloud>`). `<branch>` is the one left checked out — the dispatched branch, or another when the session moved (`gh stack add` checks the new branch out); a detached `HEAD` counts as the dispatched branch.
 4. If `HEAD` did not move: print `no changes on <branch>` and stop — no push, no pull request.
-5. Push the branch with the job's token (`gh auth git-credential`); this is the only step that holds it, on the host, after the container is gone.
-6. Open a draft pull request titled with the prompt's first line (cut to 72 characters), bodied with the prompt — unless one is already open on the branch, which is left alone.
+5. Push `<branch>` with the same token (`gh auth git-credential`), on the host, after the container is gone — a no-op when the session pushed it already.
+6. Open a draft pull request titled with the prompt's first line (cut to 72 characters), bodied with the prompt — unless one is already open on the branch, the session's own included, which is left alone. Pull requests the session opened on other branches (a stack) are not in the log; the `/cloud` skill lists them by date.
 
-Cancelling: stopping the session in the Claude app is the soft way — the poll sees it end within 30 s. `gh run cancel` is the hard way: the runner signals the step, `docker run --init` forwards SIGTERM to `session`, whose trap stops the Claude session (exit 143) and leaves it listed; the last step still commits and pushes. Either way the next run on the branch resumes that session. `timeout-minutes` is 1380 (23 h) because the job's token lives 24 at most.
+Cancelling: stopping the session in the Claude app is the soft way — the poll sees it end within 30 s. `gh run cancel` is the hard way: the runner signals the step, `docker run --init` forwards SIGTERM to `session`, whose trap stops the Claude session (exit 143) and leaves it listed; the last step still commits and pushes. Either way the next run on the branch resumes that session. `timeout-minutes` is 1380 (23 h) because `github.token`, the fallback, lives 24 at most.
 
 ## What the container has and never has
 
-Has: the image, `home/` with the login and the mirrored setup, the checkout of one branch, the sidecars on the job's network, the app's configuration in the environment, outbound network.
+Has: the image, `home/` with the login and the mirrored setup, the checkout of one branch, the sidecars on the job's network, the app's configuration in the environment, outbound network, and `GH_TOKEN` — the one token, scoped to the project's repository, so the session can push any branch of it (`main` is protected, README §3.4) and open pull requests. It is in the environment of every process the session starts, dependencies' install scripts included; the token's scope is the boundary, not the container. Nothing writes it to the tree or the log: `-e GH_TOKEN` passes no value on the command line, Actions masks it, and `gh auth login` refuses while it is set, so nothing lands in the shared `home/`.
 
-Never has: a token (the checkout keeps none; the job's is only in the last step, on the host, after the container is gone), a way to push, another repository, sudo, a published port, a real credential, the client's `~/.claude.json`, the host's Docker socket.
+Never has: another repository, sudo, a published port, a real credential, the client's `~/.claude.json`, the host's Docker socket.
 
-What does have Docker is the runner's user, and so the steps of `cloud.yml` on the dispatched branch: a session can edit that file, so read the diff of `.github/` in the pull request before dispatching the branch again.
+What does have Docker is the runner's user, and so the steps of `cloud.yml` on the dispatched branch: a session can edit that file, so read the diff of `.github/` in the pull request before dispatching the branch again. Pushing such an edit takes the token's *Workflows* permission (README §3.5); without it the push is refused and the commit stays in the runner's checkout.
 
 ## Why it is built this way
 

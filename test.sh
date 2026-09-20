@@ -8,10 +8,13 @@ verdict() { echo; [ "$fails" = 0 ] && echo "all $1 checks passed" || { echo "$fa
 if [ "${1:-}" = image ]; then
   docker build -q -t agent-test "$here" >/dev/null || exit 1
   inside() { docker run --rm agent-test bash -c "$1" 2>/dev/null; }
-  eval "$(grep -oE '^ARG (CLAUDE_VERSION|PNPM_VERSION|DEVTOOLS_MCP_VERSION)=[^ ]+' "$here/Dockerfile" | sed 's/^ARG //')"
+  eval "$(grep -oE '^ARG (CLAUDE_VERSION|PNPM_VERSION|DEVTOOLS_MCP_VERSION|GH_VERSION|GH_STACK_VERSION)=[^ ]+' "$here/Dockerfile" | sed 's/^ARG //')"
   check "claude pinned" 'inside "claude --version" | grep -q "^$CLAUDE_VERSION "'
   check "pnpm pinned" '[ "$(inside "pnpm -v")" = "$PNPM_VERSION" ]'
   check "chrome-devtools-mcp pinned" 'inside "chrome-devtools-mcp --version" | grep -q "$DEVTOOLS_MCP_VERSION"'
+  check "gh pinned" 'inside "gh --version" | grep -q "^gh version $GH_VERSION "'
+  check "gh stack baked, found once the home links the image's extensions" 'inside "mkdir -p ~/.local/share/gh && ln -s /opt/gh/extensions ~/.local/share/gh/extensions && gh stack --version" | grep -q "^gh stack version $GH_STACK_VERSION$"'
+  check "git pushes with gh's token" '[ "$(inside "git config credential.helper")" = "!gh auth git-credential" ]'
   check "session on the path" 'inside "session 2>&1 || true" | grep -q "^usage: session"'
   check "chromium renders headless without a sandbox" 'inside "chromium --headless --dump-dom about:blank" | grep -q "<html"'
   check "runs as uid 1000, the runner user of the host" '[ "$(inside "id -u")" = 1000 ]'
@@ -47,9 +50,10 @@ o=$(session app/feat/x "Implement plan.md"); status=$?
 check "sandbox off, hooks and status line dropped in the mounted settings, the rest kept" 'node -e "const s=require(\"$HOME/.claude/settings.json\");process.exit(s.sandbox.enabled===false&&!(\"hooks\" in s)&&!(\"statusLine\" in s)&&s.a===1?0:1)"'
 check "the mirrored plugin registries point at this home, not the client's" '[ "$(node -e "console.log(require(\"$HOME/.claude/plugins/known_marketplaces.json\").m.installLocation)")" = "$HOME/.claude/plugins/marketplaces/m" ] && [ "$(node -e "console.log(require(\"$HOME/.claude/plugins/installed_plugins.json\").plugins[\"p@m\"][0].installPath)")" = "$HOME/.claude/plugins/cache/m/p/1" ]'
 check "chrome-devtools registered with the image's chromium" 'grep -q "^claude mcp add --scope user chrome-devtools -- chrome-devtools-mcp --headless --isolated --executablePath /usr/local/bin/chromium$" "$STUBLOG"'
+check "the image's gh extensions linked into the mounted home" '[ "$(readlink "$HOME/.local/share/gh/extensions")" = /opt/gh/extensions ]'
 check "launched in the background, named and remote-controlled as <repo>/<branch>, permissions auto" 'grep -q "^claude --bg --name app/feat/x --remote-control app/feat/x --permission-mode auto " "$STUBLOG"'
 check "core dumps off, so a crashing child leaves nothing for git add -A" 'grep -q "^corelimit 0$" "$STUBLOG"'
-check "the prompt says container, sidecars up, commit as you go, then the user's prompt" 'head -1 "$T/claude.prompt" | grep -q "^This is a run of app in its own container" && grep -q "docker-compose.yml declares are already up" "$T/claude.prompt" && grep -q "do not push" "$T/claude.prompt" && tail -1 "$T/claude.prompt" | grep -qx "Implement plan.md"'
+check "the prompt says container, sidecars up, commit as you go, push with GH_TOKEN or the workflow will, then the user's prompt" 'head -1 "$T/claude.prompt" | grep -q "^This is a run of app in its own container" && grep -q "docker-compose.yml declares are already up" "$T/claude.prompt" && grep -q "GH_TOKEN in your environment.*push and open pull requests yourself, as drafts.*gh stack.*left unpushed.*the workflow pushes.*branch you leave checked out" "$T/claude.prompt" && tail -1 "$T/claude.prompt" | grep -qx "Implement plan.md"'
 check "a done session ends the step: exit 0, neither stopped nor removed, it stays listed" '[ "$status" = 0 ] && grep -q "^session abc123 done$" <<<"$o" && ! grep -q "^claude rm" "$STUBLOG" && ! grep -q "^claude stop" "$STUBLOG"'
 check "no session named as this run: a new launch, no --resume" 'grep -q "^session abc123 running as app/feat/x$" <<<"$o" && ! grep -q -- "--resume" "$STUBLOG"'
 
@@ -59,9 +63,10 @@ check "a session already named as this run: the newest one of this checkout that
 check "fresh: a new launch although one is named as this run" '! grep -q -- "--resume" "$STUBLOG" && grep -q "^session abc123 running as app/feat/x$" <<<"$o"'
 o=$(session app/feat/x x nope 2>&1); check "a third argument other than fresh: usage" 'grep -q "^usage: session" <<<"$o"'
 
-: > "$STUBLOG"; rm docker-compose.yml
+: > "$STUBLOG"; rm docker-compose.yml; rm "$HOME/.local/share/gh/extensions"; mkdir -p "$HOME/.local/share/gh/extensions/mine"
 MCP_PRESENT=1 session app/feat/x x >/dev/null
 check "without docker-compose.yml the prompt says to bring it all up; a registered MCP is not added twice" 'grep -q "^Bring the stack up yourself" "$T/claude.prompt" && ! grep -q "mcp add" "$STUBLOG"'
+check "a gh extensions directory already in the home is left alone" '[ -d "$HOME/.local/share/gh/extensions/mine" ] && [ ! -L "$HOME/.local/share/gh/extensions" ]'
 
 : > "$STUBLOG"; o=$(CLAUDE_AGENTS='[{"id":"abc123","state":"working","status":"idle"}]' session app/feat/x x); status=$?
 check "a session idle three polls in a row while saying working has ended its turn: exit 0, the session stopped, never removed" '[ "$status" = 0 ] && grep -q "^session abc123 idle, working by its own account$" <<<"$o" && grep -q "^claude stop abc123$" "$STUBLOG" && ! grep -q "^claude rm" "$STUBLOG"'
@@ -76,7 +81,7 @@ check "a listing that fails: error after three polls, the session stopped, never
 
 : > "$STUBLOG"
 ( CLAUDE_AGENTS='[{"id":"abc123","state":"working"}]' POLL=60 exec bash "$here/session" app/feat/x x > "$T/term.out" 2>&1 ) &
-pid=$!; until grep -q running "$T/term.out" 2>/dev/null; do sleep 0.1; done; kill -TERM "$pid"; wait "$pid"; status=$?
+pid=$!; until grep -q running "$T/term.out" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; do sleep 0.1; done; kill -TERM "$pid" 2>/dev/null; wait "$pid"; status=$?
 check "SIGTERM (a cancelled job): the session is stopped at once, never removed, exit 143" '[ "$status" = 143 ] && grep -q "^claude stop abc123$" "$STUBLOG" && ! grep -q "^claude rm" "$STUBLOG"'
 
 o=$(session x 2>&1); check "one argument: usage" 'grep -q "^usage: session" <<<"$o"'
