@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow. GitHub only dispatches the run, queues the job, holds the secrets and token, and receives the pushed branch and draft PR — nothing runs in GitHub's cloud. All compute runs on the VPS host: the self-hosted runner is a process on the host that runs the job's steps, and docker compose, the agent container, the claude session, the app processes and headless Chromium all execute there. GitHub queues each job to a free runner, one per project repository. Two runners serve two projects of different shapes at once. The left job is a project that declares a Postgres service: because the agent container has no Docker socket, the host (not the agent) runs docker compose up, bringing Postgres up as a sibling container on the same network, reached at postgres:5432; the agent container, started by docker run on that network, holds the claude session plus the API, web dev server and headless Chromium as processes. The right job is a project that declares no service: there is nothing for the host to bring up, so there is no sibling container — only the agent container, in which the session runs the whole stack as processes (API, web dev server, headless Chromium), with the database an embedded SQLite file in the checkout. Neither agent container has a Docker socket, a key or a token that can push. Only the host's /opt/agent/home mount and the runner pool are shared. The job's last step, on the host, takes the containers down, commits, pushes the branch and opens a draft PR with GITHUB_TOKEN. The Claude app reaches either session over Remote Control.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 921" width="640" height="921" role="img" aria-label="Architecture: any trigger with gh dispatches the cloud workflow. GitHub only dispatches the run, queues the job, holds the secrets and token, and receives the pushed branches and pull requests — nothing runs in GitHub's cloud. All compute runs on the VPS host: the self-hosted runner is a process on the host that runs the job's steps, and docker compose, the agent container, the claude session, the app processes and headless Chromium all execute there. GitHub queues each job to a free runner, one per project repository. Two runners serve two projects of different shapes at once. The left job is a project that declares a Postgres service: because the agent container has no Docker socket, the host (not the agent) runs docker compose up, bringing Postgres up as a sibling container on the same network, reached at postgres:5432; the agent container, started by docker run on that network, holds the claude session plus the API, web dev server and headless Chromium as processes. The right job is a project that declares no service: there is nothing for the host to bring up, so there is no sibling container — only the agent container, in which the session runs the whole stack as processes (API, web dev server, headless Chromium), with the database an embedded SQLite file in the checkout. Neither agent container has a Docker socket; each holds GH_TOKEN, the project's CLOUD_TOKEN secret (github.token when unset), scoped to its own repository, with which the session pushes and opens pull requests, a stack included. Only the host's /opt/agent/home mount and the runner pool are shared. The job's last step, on the host, takes the containers down, commits, pushes what the session left and opens a draft PR with the same token. The Claude app reaches either session over Remote Control.">
 <style>
 :root{--bg:#F4F6F3;--surface:#FFFFFF;--band:#EBEEEA;--ink:#1B2126;--muted:#5C676D;--line:#B4BCB8;--accent:#1A6E7A;--accent-soft:#DDEFF1}
 @media (prefers-color-scheme:dark){:root{--bg:#14191C;--surface:#1E2528;--band:#191F22;--ink:#E3E8E5;--muted:#9AA5A9;--line:#3B464B;--accent:#62C6D1;--accent-soft:#17333A}}
@@ -48,13 +48,13 @@
   <text class="m" x="36" y="202">.github/workflows/cloud.yml</text>
   <text class="s" x="36" y="222">same template · one job per dispatch → runner pool</text>
   <rect class="box" x="344" y="164" width="272" height="72" rx="4"/>
-  <text class="t b" x="356" y="184">draft pull requests</text>
-  <text class="s" x="356" y="202">one per branch · branch pushed by the last step</text>
-  <text class="s" x="356" y="218">opened with the job's GITHUB_TOKEN</text>
+  <text class="t b" x="356" y="184">pull requests</text>
+  <text class="s" x="356" y="202">the session's, a stack too · the last step's draft</text>
+  <text class="s" x="356" y="218">with CLOUD_TOKEN, a PAT on the one repository</text>
   <text class="s" x="70" y="272">queues each job to a</text>
   <text class="s" x="70" y="286">runner process on the host</text>
-  <text class="s a" x="590" y="272" text-anchor="end">each job: push · draft PR</text>
-  <text class="m" x="590" y="286" text-anchor="end">GITHUB_TOKEN</text>
+  <text class="s a" x="590" y="272" text-anchor="end">each job: push · PRs</text>
+  <text class="m" x="590" y="286" text-anchor="end">CLOUD_TOKEN</text>
 
   <rect class="band" x="12" y="288" width="616" height="553" rx="6"/>
   <text class="eb" x="320" y="307" text-anchor="middle">VPS · the host — every job step, container and process runs here, not in GitHub</text>
@@ -127,8 +127,8 @@
   <text class="m" x="32" y="766">/opt/agent/home</text>
   <text class="s" x="32" y="780">rw · agent $HOME: login · ~/.claude at HEAD, from git · plugins</text>
   <text class="s" x="24" y="804">only shared: this host mount and the runner pool</text>
-  <text class="s" x="24" y="817">no agent container holds a key or token that can push;</text>
-  <text class="s" x="24" y="830">the job's last step, on the host, pushes after the session</text>
+  <text class="s" x="24" y="817">each agent container holds GH_TOKEN — the project's CLOUD_TOKEN secret, scoped to its repository;</text>
+  <text class="s" x="24" y="830">the job's last step, on the host, pushes what the session left</text>
 
   <rect class="box" x="217" y="853" width="206" height="60" rx="4"/>
   <text class="t b" x="229" y="873">Claude app</text>

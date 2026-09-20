@@ -1,6 +1,6 @@
 # Remote agent host
 
-A machine with Docker runs Claude Code sessions unattended — any project, any prompt, several at a time. You dispatch a project's `cloud` workflow with a branch and a prompt. A self-hosted runner brings the project's `docker-compose.yml` up, runs the session in a container from this repository's image, then pushes the branch and opens a draft pull request. Nothing runs in GitHub's cloud. The container has no token, no sudo, no published port, no Docker socket.
+A machine with Docker runs Claude Code sessions unattended — any project, any prompt, several at a time. You dispatch a project's `cloud` workflow with a branch and a prompt. A self-hosted runner brings the project's `docker-compose.yml` up, runs the session in a container from this repository's image; the session pushes and opens pull requests itself — a stack of them with `gh stack` — and whatever it leaves unpushed, the job pushes as a draft pull request. Nothing runs in GitHub's cloud. The container holds one token, scoped to the project's repository (§3.5), and no sudo, no published port, no Docker socket.
 
 ![Architecture: triggers, GitHub, the VPS with two runners, and the Claude app](docs/architecture.svg)
 
@@ -8,7 +8,7 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 
 | File | Does |
 | :- | :- |
-| `Dockerfile` | the image: Node, pnpm, Chromium, pinned Claude Code and MCP, `session` |
+| `Dockerfile` | the image: Node, pnpm, Chromium, pinned Claude Code, MCP, `gh` and `gh stack`, `session` |
 | `session` | the run's one step in the container: adapt the setup, resume the branch's session or launch `claude --bg`, poll until it ends |
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml` |
 | `.github/workflows/image.yml` | builds and tests the image on every push to `main`, pushes `ghcr.io/qrafttech/agent` |
@@ -66,6 +66,7 @@ The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qra
    Never edit the copy by hand; every session start adapts it (see `AGENTS.md`).
 3. **The project's workflow**, once per project. Copy `workflow.yml` to `.github/workflows/cloud.yml`. Fill `env:` with the keys of the project's `.env.example` files: compose services at their service name (`postgres:5432`, not `localhost`), the app's own servers at `localhost`. Dev values go in the file; anything sensitive is a repository secret (`gh secret set NAME`, read as `${{ secrets.NAME }}`). Dev credentials only. The workflow must be on `main` and on the branch it runs.
 4. **Repository settings**, once per project: allow Actions to create pull requests (Settings → Actions → General); protect `main`.
+5. **The token**, once per project: a fine-grained personal access token (Settings → Developer settings → Fine-grained tokens) on that one repository, permissions *Contents*, *Pull requests* and *Workflows*, each read and write, nothing else (Workflows because a push that touches `.github/workflows/` — a session editing `cloud.yml` — is refused without it); `gh secret set CLOUD_TOKEN`, or `pbpaste | gh secret set CLOUD_TOKEN --repo owner/repo` from the clipboard. The session pushes and opens pull requests with it, and so does the last step. It is `GH_TOKEN` in the container's environment, so every process the session starts inherits it — `pnpm install` and its scripts, the API, the dev server, Chromium; the scope of the token and the protection of `main` are what bound that. Without the secret the workflow falls back to `github.token`, which works the same with one difference: what it pushes or opens triggers no other workflow, so the project's CI never runs on the run's pull requests. Renew the token when it expires (a year at most); a run then fails at its first push.
 
 ## 4. A run
 
@@ -82,13 +83,13 @@ Or, from a Claude session in the project's checkout, `/cloud <prompt>` — the `
 
 **Sessions are kept.** A run never removes its session: it stays listed on the host and in the Claude app, and the next run on the same branch resumes it — same ID, same context — with the new prompt as its next turn. `/cloud fresh <prompt>` (or `-f fresh=true`) starts a new one instead, leaving the old one listed; a resumed session re-reads its whole transcript first, so that is the choice for a long one. No prompt at all means `Continue where you left off.` To forget a session: `ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent claude rm <id>'`, by hand, never by the tooling.
 
-The session's prompt gets three preamble lines: it runs in its own container, the declared sidecars are already up (or it must bring the whole stack up), commit as you go and do not push. Exact wording in `AGENTS.md`.
+The session's prompt gets three preamble lines: it runs in its own container, the declared sidecars are already up (or it must bring the whole stack up), commit as you go and push and open pull requests when the task calls for it — `GH_TOKEN` is in its environment and `gh stack` on its path — or leave it to the workflow. Exact wording in `AGENTS.md`.
 
 Watch, answer or stop the run in the Claude app: **Code → `<repo>/<branch>`**. `gh run watch` shows the job; `gh run list --workflow cloud` the queue.
 
 ## 5. The end
 
-Nothing to do on the client. The last step always runs, even after a cancel or timeout: it tears the containers down, commits what the session left as `run: <branch>`, pushes, and opens a draft pull request — or leaves the existing one alone. No changes → no push: `no changes on <branch>` in the log. Then `git pull`, review, mark ready.
+Nothing to do on the client. The last step always runs, even after a cancel or timeout: it tears the containers down, commits what the session left as `run: <branch>` on the branch it left checked out (the dispatched one, or the top of a stack it cut), pushes that branch, and opens a draft pull request — or leaves the existing one alone, the session's own included. No changes → no push: `no changes on <branch>` in the log, which says nothing about what the session pushed itself: a stack's branches and pull requests are on GitHub, not in the log. Then `git pull` (or `git fetch origin` for a stack), review, mark ready.
 
 To cancel: stop the session in the Claude app (seen within 30 s), or `gh run cancel <id>` — the last step still runs, and the session stays listed for the next run to resume. A session blocked on an unanswered question holds its runner until the 23-hour timeout.
 
@@ -105,7 +106,7 @@ The session's own screen is in the Claude app. `claude logs <id>` runs as `docke
 
 ## 7. Upgrading
 
-- **Claude Code, pnpm, the MCP, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
-- **Docker, Compose, `git`, `jq`, `gh`**: `apt upgrade`, as root. The runners update themselves.
+- **Claude Code, pnpm, the MCP, `gh`, `gh stack`, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
+- **Docker, Compose, `git`, `jq`, `gh` on the host**: `apt upgrade`, as root. The runners update themselves.
 - **Your Claude setup**: the two lines of §3.2.
 - **The login**: §3.1 again every 30 days, the refresh grant's cap; `claude auth logout` first after any doubt about the box.

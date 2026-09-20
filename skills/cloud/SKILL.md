@@ -69,7 +69,8 @@ From `gh run view "$run" --log`: the `session <id> …` lines — `resumed from 
 
 ```sh
 if [ "$branch" = "$current" ]; then git pull --rebase -q origin "$branch"; else git fetch -q origin "$branch"; fi
-gh pr list --head "$branch" --json url,isDraft -q '.[] | "\(.url) draft=\(.isDraft)"'
+since=$(gh run view "$run" --json createdAt -q .createdAt)
+gh pr list --json url,isDraft,headRefName,baseRefName,updatedAt -q ".[] | select(.updatedAt >= \"$since\") | \"\(.url) \(.headRefName) → \(.baseRefName) draft=\(.isDraft)\""
 ```
 
-Say what came back: the commits pulled (or fetched, when the run had its own branch off `main` — never rebase `main` onto them), the pull request, or `no changes on <branch>`. The session stays listed on the host either way; the next `/cloud` on this branch resumes it.
+Say what came back: the commits pulled (or fetched, when the run had its own branch off `main` — never rebase `main` onto them), every pull request the run opened or touched — the session pushes its own, a stack included, and the last step adds a draft on the branch for anything left unpushed — or `no changes on <branch>`. Branches the session pushed besides `$branch` are on `origin`, not local: `git fetch origin` to see them. The session stays listed on the host either way; the next `/cloud` on this branch resumes it.

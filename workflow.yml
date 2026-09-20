@@ -36,6 +36,7 @@ jobs:
           PROMPT: ${{ inputs.prompt }}
           FRESH: ${{ inputs.fresh }}
           CONFIG: ${{ toJSON(env) }}
+          GH_TOKEN: ${{ secrets.CLOUD_TOKEN || github.token }}
         run: |
           run=cloud-$GITHUB_RUN_ID
           network=
@@ -45,18 +46,19 @@ jobs:
             network="--network ${run}_default"
           fi
           exec docker run --rm --init --pull always --name "$run" $network \
-            $(jq -r 'del(.PROMPT, .FRESH, .CONFIG) | keys[] | "-e " + .' <<<"$CONFIG") \
+            $(jq -r 'del(.PROMPT, .FRESH, .CONFIG, .GH_TOKEN) | keys[] | "-e " + .' <<<"$CONFIG") -e GH_TOKEN \
             -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT" $([ "$FRESH" != true ] || echo fresh)
       - if: always()
         env:
           PROMPT: ${{ inputs.prompt }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CLOUD_TOKEN || github.token }}
         run: |
           docker rm -f "cloud-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
           [ ! -f docker-compose.yml ] || docker compose -p "cloud-$GITHUB_RUN_ID" down -v
+          branch=$(git branch --show-current); branch=${branch:-$GITHUB_REF_NAME}
           git add -A -- . ':!*.log' ':!*.tmp' ':!*.pid'
-          git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $GITHUB_REF_NAME"
-          [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || { echo "no changes on $GITHUB_REF_NAME"; exit 0; }
-          git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
-          gh pr list --head "$GITHUB_REF_NAME" --json url -q '.[].url' | grep . ||
-            gh pr create --draft --head "$GITHUB_REF_NAME" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"
+          git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $branch"
+          [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || { echo "no changes on $branch"; exit 0; }
+          git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$branch"
+          gh pr list --head "$branch" --json url -q '.[].url' | grep . ||
+            gh pr create --draft --head "$branch" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"
