@@ -72,6 +72,8 @@ Ce qui **marche** : ouvrir un pane agent Claude dans l'app (sur un worktree orca
 
 Ce qui **ne suffit pas** : `orca account add --agent claude`. Il enregistre un compte « managed » dans `~/.config/orca/claude-accounts/<id>/`, mais les panes sont par défaut en `selectionKey: host` (= le `~/.claude` de l'user) et l'ignorent. Utile seulement pour plusieurs comptes sur un même hôte.
 
+Premier lancement par Orca (`claude --dangerously-skip-permissions`) : Claude demande d'accepter le mode bypass, une fois par machine → `bypassPermissionsModeAccepted: true` dans `~/.claude.json`. À poser dans `bootstrap.sh`.
+
 Piste pour scripter : `claude setup-token` (token longue durée, abonnement) → `CLAUDE_CODE_OAUTH_TOKEN` dans un `EnvironmentFile` de l'unit. Vérifié : l'env de `orca-serve` est hérité par les Claude qu'Orca lance.
 
 ## 6. Par worktree — app, puis main
@@ -92,4 +94,5 @@ Accès depuis le laptop (tailnet) : `http://100.105.104.105:4001` (API/nginx), `
 | 3 appairage | laptop, `orca environment add` | client Orca — desktop ou mobile, à vérifier |
 | 4 gh / git / clone / .env / image | terminal Orca | `bootstrap.sh` (user `orca`) avec `GH_TOKEN`, identité, `.env` fournis |
 | 5 login Claude | pane Orca | `CLAUDE_CODE_OAUTH_TOKEN` |
+| 5 acceptation bypass permissions | pane Orca, 1re fois | `bypassPermissionsModeAccepted` dans `~/.claude.json` |
 | 6 start de la stack | terminal du worktree | hook `setup` de `orca.yaml` |
