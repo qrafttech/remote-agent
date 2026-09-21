@@ -11,6 +11,7 @@ ORCA_VERSION="${ORCA_VERSION:-1.4.205}"   # pinned = same as the desktop client 
 CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.276}"
 ORCA_PORT="${ORCA_PORT:-6768}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"              # optional: a Tailscale auth key for a non-interactive join
+ORCA_PAIRING="${ORCA_PAIRING:-desktop}"   # desktop | mobile — which pairing link `orca serve` prints (one at a time)
 
 # 1. System packages: Electron/Xvfb runtime deps (Debian 12 = unsuffixed lib names) + tooling
 export DEBIAN_FRONTEND=noninteractive
@@ -68,7 +69,10 @@ chmod 755 /usr/local/bin/orca
 # 6. Claude Code for the `orca` user, pinned (native installer, no Node needed) — Orca spawns `claude` in each worktree
 sudo -u orca -H bash -c "~/.local/bin/claude --version 2>/dev/null | grep -q '^$CLAUDE_CODE_VERSION ' || curl -fsSL https://claude.ai/install.sh | bash -s -- $CLAUDE_CODE_VERSION"
 
-# 7. systemd unit — advertised on the tailnet IP; the GCP firewall keeps the port closed on the public IP
+# 7. systemd unit — advertised on the tailnet IP; the GCP firewall keeps the port closed on the public IP.
+#    `orca serve` prints one pairing link per scope: the runtime (desktop) one by default, the mobile one with
+#    --mobile-pairing. Pair the desktop first, then rerun with ORCA_PAIRING=mobile to pair a phone.
+PAIRING_FLAG=""; [ "$ORCA_PAIRING" != mobile ] || PAIRING_FLAG="--mobile-pairing"
 cat > /etc/systemd/system/orca-serve.service <<UNIT
 [Unit]
 Description=Orca runtime server
@@ -82,7 +86,7 @@ Type=simple
 User=orca
 WorkingDirectory=/home/orca
 Environment=LIBGL_ALWAYS_SOFTWARE=1
-ExecStart=/opt/orca/squashfs-root/AppRun serve --port ${ORCA_PORT} --pairing-address ${TS_IP}
+ExecStart=/opt/orca/squashfs-root/AppRun serve --port ${ORCA_PORT} ${PAIRING_FLAG} --pairing-address ${TS_IP}
 StandardOutput=journal
 StandardError=journal
 KillMode=mixed
@@ -104,5 +108,7 @@ docker --version; docker compose version; gh --version | head -1; tailscale vers
 echo "tailnet ip: $TS_IP"
 sudo -u orca orca --version
 systemctl --no-pager --lines=0 status orca-serve.service
-echo; echo "Pairing (desktop): Settings -> Remote Orca Servers -> Add Server, paste the URL from:"
+echo; echo "Pairing link ($ORCA_PAIRING scope):"
 echo "  sudo journalctl -u orca-serve -o cat | grep '^Pairing URL:' | tail -1"
+echo "  desktop: Settings -> Remote Orca Servers -> Add Server, paste the URL"
+echo "  mobile : ORCA_PAIRING=mobile ./install.sh, then on the laptop: qrencode -t ansiutf8 '<URL>' and scan it (phone on the tailnet)"
