@@ -39,9 +39,10 @@ The workflow resumes the newest listed session of that name unless told `fresh`.
 
 A resumed session re-reads its whole transcript first; a long one starts near compaction. That is the one reason to prefer `fresh` for a task the old session need not remember.
 
-## 5. The branch, the push, the dispatch
+## 5. The setup, the branch, the push, the dispatch
 
 ```sh
+rsync -aR --delete --exclude .DS_Store --exclude /skills/synced/ ~/.claude/./{CLAUDE.md,settings.json,notify.sh,rules,commands,agents,agent-memory,skills,plugins} agent@vps:/opt/agent/home/.claude/ &&
 branch=$current
 [ "$current" != main ] || branch="cloud/$(date +%m%d-%H%M)-$(printf '%s' "$prompt" | tr -cs 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40 | sed 's/-$//')"
 args=(); [ -z "$prompt" ] || args+=(-f "prompt=$prompt"); [ "$fresh" != true ] || args+=(-f fresh=true)
@@ -53,7 +54,7 @@ until run=$(gh run list --workflow cloud --branch "$branch" --limit 1 --json dat
 echo "run $run on $branch"
 ```
 
-On `main` the run gets its own branch, named from the prompt; on any other branch the run continues that branch. A rejected push stops here — pull first, nothing was dispatched. A prompt is passed only when there is one (an empty `-f prompt=` would replace the workflow's default with nothing), and `fresh` only when chosen.
+The rsync ships `~/.claude` as it is on the client — skills, rules, settings, plugins — so the run holds what this session holds; a failed rsync stops here. On `main` the run gets its own branch, named from the prompt; on any other branch the run continues that branch. A rejected push stops here — pull first, nothing was dispatched. A prompt is passed only when there is one (an empty `-f prompt=` would replace the workflow's default with nothing), and `fresh` only when chosen.
 
 ## 6. Watch
 
