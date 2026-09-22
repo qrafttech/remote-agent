@@ -58,7 +58,8 @@ jobs:
           branch=$(git branch --show-current); branch=${branch:-$GITHUB_REF_NAME}
           git add -A -- . ':!*.log' ':!*.tmp' ':!*.pid'
           git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $branch"
-          [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || { echo "no changes on $branch"; exit 0; }
+          remote=$(git -c credential.helper='!gh auth git-credential' ls-remote -q origin "refs/heads/$branch" | cut -f1)
+          [ "$(git rev-parse HEAD)" != "$remote" ] || { echo "nothing left unpushed on $branch"; exit 0; }
           git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$branch"
           gh pr list --head "$branch" --json url -q '.[].url' | grep . ||
             gh pr create --draft --head "$branch" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"

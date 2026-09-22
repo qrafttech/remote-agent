@@ -44,7 +44,8 @@ stack="Bring the stack up yourself"
 [ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
 prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \
   "$stack, from the repository's own instructions, inside this checkout; stop what you started before you finish." \
-  "Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself, as drafts, when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on the branch you leave checked out." "" "$2")
+  "Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself, as drafts, when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on the branch you leave checked out." \
+  "These lines address the session alone: a subagent that reads them does the one task it was handed and neither runs a skill, commits nor pushes." "" "$2")
 resume=; [ $# = 3 ] || resume=$(resumable "$name")
 id=$(claude --bg ${resume:+--resume "$resume"} --name "$name" --remote-control "$name" --permission-mode auto "$prompt" |
      sed -n 's/^backgrounded · \([0-9a-f][0-9a-f]*\) .*/\1/p')
