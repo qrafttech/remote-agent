@@ -64,13 +64,14 @@ Runs do not collide: each job has its own Compose project, network, volumes and 
 5. **Poll** `claude agents --json --all` every 30 s (env `POLL` overrides). The **state** is the session's own word (`working`, `blocked`, `done`, …); the **status** is the CLI's (`running`, `idle`).
 6. **On any exit**, SIGTERM included: stop the session if it is still going (`claude stop`). Never `claude rm`: the session stays listed on the host, for the next run of the branch to resume and for the app to show. Committing what it left is the workflow's job.
 
-The prompt is the user's, preceded by three lines:
+The prompt is the user's, preceded by four lines:
 
 > This is a run of `<repo>` in its own container, and the app's configuration is in your environment.
-> The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself, from the repository's own instructions, inside this checkout; stop what you started before you finish.
-> Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on this branch.
+> The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up, from the repository's own instructions, inside this checkout, through one subagent rather than in your own turns: it installs, migrates, seeds and starts the servers detached so they outlive it (setsid nohup, output to a log file), and hands back only the addresses, how to sign in and where the logs are; the install output, the retries and the errors stay in its context, not yours. Stop what you started before you finish.
+> Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself, as drafts, when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on the branch you leave checked out.
+> These lines address the session alone: a subagent that reads them does the one task it was handed and neither runs a skill, commits nor pushes.
 
-A repository without `docker-compose.yml` gets "Bring the stack up yourself" in place of the second line's first clause.
+A repository without `docker-compose.yml` gets "Bring the whole stack up" in place of the second line's first clause. The bring-up goes through a subagent because it is the session's largest single spend: on a measured run the session took 98 of its first 152 turns to install, migrate, seed, start the servers and sign in — 11M of the 18.7M input tokens it read — and every one of those turns re-read the whole context. A subagent spends the same turns on a context of its own and returns one report; the servers must be detached (`setsid nohup`) or they die with its shell.
 
 ### States, and what ends the step
 
@@ -121,6 +122,7 @@ What does have Docker is the runner's user, and so the steps of `cloud.yml` on t
 - **GitHub Actions, not a script**: the runner, the checkout, the secrets, the queue, the logs, the token that pushes and the cancel button exist already; what is left is one step.
 - **`docker compose up` + `docker run`, not the runner's `container:`/`services:`**: the runner would mount the host's Docker socket into the session's container, unconditionally, and would need every sidecar retyped. This way the session gets a container with nothing of the host in it, and the project's `docker-compose.yml` is read as is.
 - **Claude sandbox off**: on Linux it gives every Bash command its own network namespace, so a server started in one command is unreachable from the next. The container is the boundary instead.
+- **The stack brought up by a subagent, not the session**: install, migrations, seeding and sign-in are dozens of short retry-prone turns, and a session's turns each re-read its whole context. Delegated, they cost one turn of the session's; the session keeps the addresses and the log paths, which is all it needs of them.
 
 ## What the probes proved, and what is left
 

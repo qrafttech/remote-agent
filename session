@@ -40,10 +40,10 @@ trap finish EXIT
 trap 'exit 143' TERM INT
 claude auth status --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.exit(JSON.parse(s).loggedIn?0:1))' 2>/dev/null ||
   { echo "not logged in: $HOME/.claude holds no valid login; log in on the host, README §3.1" >&2; exit 1; }
-stack="Bring the stack up yourself"
-[ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up yourself"
+stack="Bring the whole stack up"
+[ ! -f docker-compose.yml ] || stack="The services docker-compose.yml declares are already up under their service names, so do not start Docker; bring the rest of the stack up"
 prompt=$(printf '%s\n' "This is a run of ${name%%/*} in its own container, and the app's configuration is in your environment." \
-  "$stack, from the repository's own instructions, inside this checkout; stop what you started before you finish." \
+  "$stack, from the repository's own instructions, inside this checkout, through one subagent rather than in your own turns: it installs, migrates, seeds and starts the servers detached so they outlive it (setsid nohup, output to a log file), and hands back only the addresses, how to sign in and where the logs are; the install output, the retries and the errors stay in its context, not yours. Stop what you started before you finish." \
   "Commit your work on this branch as you go, with real messages. GH_TOKEN in your environment is a token on this repository: push and open pull requests yourself, as drafts, when the task calls for it (a stack of branches with gh stack); whatever is left unpushed when you finish, the workflow pushes as a draft pull request on the branch you leave checked out." \
   "These lines address the session alone: a subagent that reads them does the one task it was handed and neither runs a skill, commits nor pushes." "" "$2")
 resume=; [ $# = 3 ] || resume=$(resumable "$name")
