@@ -87,4 +87,7 @@ check "SIGTERM (a cancelled job): the session is stopped at once, never removed,
 o=$(session x 2>&1); check "one argument: usage" 'grep -q "^usage: session" <<<"$o"'
 : > "$STUBLOG"; o=$(CLAUDE_AUTH='{"loggedIn":false,"authMethod":"none"}' session app/feat/x x); status=$?
 check "no login in the home: refused before any launch, exit 1, README §3.1 named" '[ "$status" = 1 ] && grep -q "^not logged in: .*§3.1" <<<"$o" && ! grep -q "^claude --bg" "$STUBLOG" && ! grep -q "^claude stop" "$STUBLOG"'
+yml() { ruby -ryaml -e "$1" "$here/action.yml" "$here/workflow.yml"; }
+check "action.yml: a composite of two bash steps, the last always, inputs prompt, fresh and a required token" 'yml "a=YAML.load_file(ARGV[0]); i=a[%q(inputs)]; s=a[%q(runs)][%q(steps)]; exit(a[%q(runs)][%q(using)]==%q(composite) && i.keys.sort==%w(fresh prompt token) && i[%q(token)][%q(required)]==true && s.size==2 && s.all?{|x| x[%q(shell)]==%q(bash)} && s[1][%q(if)]==%q(always()) && s[0][%q(env)][%q(CONFIG)].include?(%q(toJSON(env))) ? 0 : 1)"'
+check "workflow.yml: no shell, the checkout without credentials, then this action with the prompt, fresh and the token" 'yml "w=YAML.load_file(ARGV[1]); s=w[%q(jobs)][%q(run)][%q(steps)]; exit(s.none?{|x| x.key?(%q(run))} && s.size==2 && s[0][%q(with)][%q(persist-credentials)]==false && s[1][%q(uses)]==%q(qrafttech/remote-agent@main) && s[1][%q(with)].keys.sort==%w(fresh prompt token) ? 0 : 1)"'
 verdict session

@@ -10,7 +10,8 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 | :- | :- |
 | `Dockerfile` | the image: Node, pnpm, Chromium, pinned Claude Code, MCP, `gh` and `gh stack`, `session` |
 | `session` | the run's one step in the container: adapt the setup, resume the branch's session or launch `claude --bg`, poll until it ends |
-| `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml` |
+| `action.yml` | the composite action a project's workflow uses: sidecars up, the session's container, then teardown, commit, push, draft pull request |
+| `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: its `env:`, a checkout, `uses: qrafttech/remote-agent@main` |
 | `.github/workflows/image.yml` | builds and tests the image on every push to `main`, pushes `ghcr.io/qrafttech/agent` |
 | `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds and checks the pins |
 | `AGENTS.md` | what a project brings, the rules of this repository, and the reference: every step, state, message |
@@ -38,7 +39,7 @@ ssh root@vps 'curl -fsSL https://get.docker.com | sh && apt install -y git jq \
   && useradd -m -u 1000 -G docker agent && install -d -o agent -g agent -m 700 /opt/agent /opt/agent/home'
 ```
 
-Docker from Docker's script: Debian's `docker.io` lacks Compose ≥ 2.24, which the workflow needs. Give `agent` your SSH key and passwordless `sudo`.
+Docker from Docker's script: Debian's `docker.io` lacks Compose ≥ 2.24, which the action needs. Give `agent` your SSH key and passwordless `sudo`.
 
 One runner per concurrent run. The token comes from where `gh` is admin on the repository, valid one hour:
 
@@ -63,7 +64,7 @@ The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qra
    rsync -aR --delete --exclude .DS_Store --exclude /skills/synced/ ~/.claude/./{CLAUDE.md,settings.json,notify.sh,rules,commands,agents,agent-memory,skills,plugins} agent@vps:/opt/agent/home/.claude/
    ```
    Only those paths travel; the host's login, sessions and projects are its own. Never edit the copy by hand; every session start adapts it (see `AGENTS.md`).
-3. **The project's workflow**, once per project. Copy `workflow.yml` to `.github/workflows/cloud.yml`. Fill `env:` with the keys of the project's `.env.example` files: compose services at their service name (`postgres:5432`, not `localhost`), the app's own servers at `localhost`. Dev values go in the file; anything sensitive is a repository secret (`gh secret set NAME`, read as `${{ secrets.NAME }}`). Dev credentials only. The workflow must be on `main` and on the branch it runs.
+3. **The project's workflow**, once per project. Copy `workflow.yml` to `.github/workflows/cloud.yml`; its steps are a checkout and this repository's action, `action.yml`, so the file holds no shell. Fill `env:` with the keys of the project's `.env.example` files: compose services at their service name (`postgres:5432`, not `localhost`), the app's own servers at `localhost`. Dev values go in the file; anything sensitive is a repository secret (`gh secret set NAME`, read as `${{ secrets.NAME }}`). Dev credentials only. The workflow must be on `main` and on the branch it runs. If this repository is private, Settings → Actions → General → Access, here, must allow the organization's repositories to use its actions, or the job fails at `uses:`.
 4. **Repository settings**, once per project: allow Actions to create pull requests (Settings → Actions → General); protect `main`.
 5. **The token**, once per project: a fine-grained personal access token (Settings → Developer settings → Fine-grained tokens) on that one repository, permissions *Contents*, *Pull requests* and *Workflows*, each read and write, nothing else (Workflows because a push that touches `.github/workflows/` — a session editing `cloud.yml` — is refused without it); `gh secret set CLOUD_TOKEN`, or `pbpaste | gh secret set CLOUD_TOKEN --repo owner/repo` from the clipboard. The session pushes and opens pull requests with it, and so does the last step. It is `GH_TOKEN` in the container's environment, so every process the session starts inherits it — `pnpm install` and its scripts, the API, the dev server, Chromium; the scope of the token and the protection of `main` are what bound that. Without the secret the workflow falls back to `github.token`, which works the same with one difference: what it pushes or opens triggers no other workflow, so the project's CI never runs on the run's pull requests. Renew the token when it expires (a year at most); a run then fails at its first push.
 
@@ -105,6 +106,7 @@ The session's own screen is in the Claude app. `claude logs <id>` runs as `docke
 
 ## 7. Upgrading
 
+- **`action.yml`**: push to `main`; every project on `@main` runs it from its next run on, nothing to copy. A project pinned to a tag or a commit moves its `uses:` when it chooses.
 - **Claude Code, pnpm, the MCP, `gh`, `gh stack`, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
 - **Docker, Compose, `git`, `jq`, `gh` on the host**: `apt upgrade`, as root. The runners update themselves.
 - **Your Claude setup**: the two lines of §3.2.

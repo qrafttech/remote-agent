@@ -32,34 +32,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - env:
-          PROMPT: ${{ inputs.prompt }}
-          FRESH: ${{ inputs.fresh }}
-          CONFIG: ${{ toJSON(env) }}
-          GH_TOKEN: ${{ secrets.CLOUD_TOKEN || github.token }}
-        run: |
-          run=cloud-$GITHUB_RUN_ID
-          network=
-          if [ -f docker-compose.yml ]; then
-            { echo services:; for s in $(docker compose config --services); do echo "  $s: {ports: !reset []}"; done; } > "$RUNNER_TEMP/unpublished.yml"
-            docker compose -p "$run" -f docker-compose.yml -f "$RUNNER_TEMP/unpublished.yml" up -d --wait
-            network="--network ${run}_default"
-          fi
-          exec docker run --rm --init --pull always --name "$run" $network \
-            $(jq -r 'del(.PROMPT, .FRESH, .CONFIG, .GH_TOKEN) | keys[] | "-e " + .' <<<"$CONFIG") -e GH_TOKEN \
-            -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT" $([ "$FRESH" != true ] || echo fresh)
-      - if: always()
-        env:
-          PROMPT: ${{ inputs.prompt }}
-          GH_TOKEN: ${{ secrets.CLOUD_TOKEN || github.token }}
-        run: |
-          docker rm -f "cloud-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
-          [ ! -f docker-compose.yml ] || docker compose -p "cloud-$GITHUB_RUN_ID" down -v
-          branch=$(git branch --show-current); branch=${branch:-$GITHUB_REF_NAME}
-          git add -A -- . ':!*.log' ':!*.tmp' ':!*.pid'
-          git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $branch"
-          remote=$(git -c credential.helper='!gh auth git-credential' ls-remote -q origin "refs/heads/$branch" | cut -f1)
-          [ "$(git rev-parse HEAD)" != "$remote" ] || { echo "nothing left unpushed on $branch"; exit 0; }
-          git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$branch"
-          gh pr list --head "$branch" --json url -q '.[].url' | grep . ||
-            gh pr create --draft --head "$branch" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"
+      - uses: qrafttech/remote-agent@main
+        with:
+          prompt: ${{ inputs.prompt }}
+          fresh: ${{ inputs.fresh }}
+          token: ${{ secrets.CLOUD_TOKEN || github.token }}

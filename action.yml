@@ -1,0 +1,55 @@
+# The run's two steps on the host, for a project's cloud.yml: bring the sidecars up
+# and hold the session's container, then take everything down, commit, push and
+# open a draft pull request. The calling job's env: is the app's configuration.
+name: cloud
+description: Run a Claude Code session on the checked-out branch in the agent image, then push what it left as a draft pull request
+
+inputs:
+  prompt:
+    description: What the session does; a session already named after the branch is resumed with it
+    required: false
+    default: Continue where you left off.
+  fresh:
+    description: Start a new session even when one is named after the branch
+    required: false
+    default: 'false'
+  token:
+    description: The token the session and the last step push and open pull requests with
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PROMPT: ${{ inputs.prompt }}
+        FRESH: ${{ inputs.fresh }}
+        CONFIG: ${{ toJSON(env) }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        run=cloud-$GITHUB_RUN_ID
+        network=
+        if [ -f docker-compose.yml ]; then
+          { echo services:; for s in $(docker compose config --services); do echo "  $s: {ports: !reset []}"; done; } > "$RUNNER_TEMP/unpublished.yml"
+          docker compose -p "$run" -f docker-compose.yml -f "$RUNNER_TEMP/unpublished.yml" up -d --wait
+          network="--network ${run}_default"
+        fi
+        exec docker run --rm --init --pull always --name "$run" $network \
+          $(jq -r 'del(.PROMPT, .FRESH, .CONFIG, .GH_TOKEN) | keys[] | "-e " + .' <<<"$CONFIG") -e GH_TOKEN \
+          -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT" $([ "$FRESH" != true ] || echo fresh)
+    - if: always()
+      shell: bash
+      env:
+        PROMPT: ${{ inputs.prompt }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        docker rm -f "cloud-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+        [ ! -f docker-compose.yml ] || docker compose -p "cloud-$GITHUB_RUN_ID" down -v
+        branch=$(git branch --show-current); branch=${branch:-$GITHUB_REF_NAME}
+        git add -A -- . ':!*.log' ':!*.tmp' ':!*.pid'
+        git diff --cached --quiet || git -c user.name=agent -c user.email=agent@cloud commit -qm "run: $branch"
+        remote=$(git -c credential.helper='!gh auth git-credential' ls-remote -q origin "refs/heads/$branch" | cut -f1)
+        [ "$(git rev-parse HEAD)" != "$remote" ] || { echo "nothing left unpushed on $branch"; exit 0; }
+        git -c credential.helper='!gh auth git-credential' push origin "HEAD:refs/heads/$branch"
+        gh pr list --head "$branch" --json url -q '.[].url' | grep . ||
+          gh pr create --draft --head "$branch" --title "$(head -1 <<<"$PROMPT" | cut -c1-72)" --body "$PROMPT"
