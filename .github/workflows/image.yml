@@ -3,15 +3,42 @@ name: image
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+concurrency: image
+
 jobs:
-  image:
+  claude:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+      build: ${{ steps.latest.outputs.build }}
+    steps:
+      - id: latest
+        run: |
+          v=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          t=$(curl -fsSL "https://ghcr.io/token?scope=repository:$GITHUB_REPOSITORY_OWNER/agent:pull" | jq -r .token)
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && curl -fsSI -o /dev/null -H "Authorization: Bearer $t" \
+               -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+               "https://ghcr.io/v2/$GITHUB_REPOSITORY_OWNER/agent/manifests/$v"; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: claude
+    if: needs.claude.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_VERSION: ${{ needs.claude.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - run: bash test.sh
@@ -20,5 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker tag agent-test "ghcr.io/$GITHUB_REPOSITORY_OWNER/agent"
-          docker push "ghcr.io/$GITHUB_REPOSITORY_OWNER/agent"
+          for tag in latest "$CLAUDE_VERSION"; do
+            docker tag agent-test "ghcr.io/$GITHUB_REPOSITORY_OWNER/agent:$tag"
+            docker push "ghcr.io/$GITHUB_REPOSITORY_OWNER/agent:$tag"
+          done

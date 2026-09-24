@@ -8,12 +8,12 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 
 | File | Does |
 | :- | :- |
-| `Dockerfile` | the image: Node, pnpm, Chromium, pinned Claude Code, MCP, `gh` and `gh stack`, `session` |
+| `Dockerfile` | the image: Node, pnpm, Chromium, the latest Claude Code, MCP, `gh` and `gh stack`, `session` |
 | `session` | the run's one step in the container: adapt the setup, resume the branch's session or launch `claude --bg`, poll until it ends |
 | `action.yml` | the composite action a project's workflow uses: sidecars up, the session's container, then teardown, commit, push, draft pull request |
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: its `env:`, a checkout, `uses: qrafttech/remote-agent@main` |
-| `.github/workflows/image.yml` | builds and tests the image on every push to `main`, pushes `ghcr.io/qrafttech/agent` |
-| `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds and checks the pins |
+| `.github/workflows/image.yml` | builds and tests the image on every push to `main`, and every 6 hours when Claude Code has a release the registry lacks; pushes `ghcr.io/qrafttech/agent` as `latest` and as the Claude Code version |
+| `test.sh [image]` | `session` against a stubbed `claude`; with `image`, builds and checks the pins, Claude Code at its latest release or `CLAUDE_VERSION` |
 | `AGENTS.md` | what a project brings, the rules of this repository, and the reference: every step, state, message |
 | `skills/cloud/` | the `/cloud` skill: push, dispatch, watch, report — from a Claude session on the client |
 | `docs/` | the two figures |
@@ -117,7 +117,8 @@ The session's own screen is in the Claude app. `claude logs <id>` runs as `docke
 ## 7. Upgrading
 
 - **`action.yml`**: push to `main`; every project on `@main` runs it from its next run on, nothing to copy. A project pinned to a tag or a commit moves its `uses:` when it chooses.
-- **Claude Code, pnpm, the MCP, `gh`, `gh stack`, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
+- **Claude Code**: nothing to do. `image.yml` checks the latest release every 6 hours and, when `ghcr.io/qrafttech/agent:<version>` does not exist yet, builds, tests and pushes it as `latest`; every run pulls `latest`. A release that breaks a run is rolled back by retagging the previous version: `docker buildx imagetools create -t ghcr.io/qrafttech/agent:latest ghcr.io/qrafttech/agent:<previous>` — until the next release, which the schedule then builds. GitHub disables a schedule after 60 days without activity on the repository; `gh workflow enable image` turns it back on.
+- **pnpm, the MCP, `gh`, `gh stack`, `session`**: bump the `ARG` in the `Dockerfile` or edit the script; `bash test.sh` and `bash test.sh image`; push to `main`. Then one probe on a scratch branch: `gh workflow run cloud --ref probe -f prompt="Bring the stack up, open the web app in Chrome through the chrome-devtools MCP, report document.title, then stop everything you started"`. Only that run tests the network, Chromium, Remote Control and the plugins on the real host.
 - **Docker, Compose, `git`, `jq`, `gh` on the host**: `apt upgrade`, as root. The runners update themselves.
 - **Your Claude setup**: the two lines of §3.2.
 - **The login**: §3.1 again every 30 days, the refresh grant's cap; `claude auth logout` first after any doubt about the box.
