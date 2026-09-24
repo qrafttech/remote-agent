@@ -6,10 +6,12 @@ check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails
 verdict() { echo; [ "$fails" = 0 ] && echo "all $1 checks passed" || { echo "$fails check(s) failed"; exit 1; }; }
 
 if [ "${1:-}" = image ]; then
-  docker build -q -t agent-test "$here" >/dev/null || exit 1
+  CLAUDE_VERSION=${CLAUDE_VERSION:-$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)} || exit 1
+  docker build -q --build-arg "CLAUDE_VERSION=$CLAUDE_VERSION" -t agent-test "$here" >/dev/null || exit 1
   inside() { docker run --rm agent-test bash -c "$1" 2>/dev/null; }
-  eval "$(grep -oE '^ARG (CLAUDE_VERSION|PNPM_VERSION|DEVTOOLS_MCP_VERSION|GH_VERSION|GH_STACK_VERSION)=[^ ]+' "$here/Dockerfile" | sed 's/^ARG //')"
-  check "claude pinned" 'inside "claude --version" | grep -q "^$CLAUDE_VERSION "'
+  eval "$(grep -oE '^ARG (PNPM_VERSION|DEVTOOLS_MCP_VERSION|GH_VERSION|GH_STACK_VERSION)=[^ ]+' "$here/Dockerfile" | sed 's/^ARG //')"
+  check "claude follows the latest release unless the build names a version" 'grep -qx "ARG CLAUDE_VERSION=latest" "$here/Dockerfile"'
+  check "claude at the version built, the latest release by default" 'inside "claude --version" | grep -q "^$CLAUDE_VERSION "'
   check "pnpm pinned" '[ "$(inside "pnpm -v")" = "$PNPM_VERSION" ]'
   check "chrome-devtools-mcp pinned" 'inside "chrome-devtools-mcp --version" | grep -q "$DEVTOOLS_MCP_VERSION"'
   check "gh pinned" 'inside "gh --version" | grep -q "^gh version $GH_VERSION "'
