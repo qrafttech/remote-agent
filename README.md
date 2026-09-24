@@ -54,6 +54,16 @@ for n in 1 2; do
 done
 ```
 
+A runner's service stops for good the moment the kernel kills anything in it for memory, and every run on that repository then queues unanswered. Keep them up, once, and after adding a runner:
+
+```bash
+ssh agent@vps 'for u in $(systemctl list-units --all --plain --no-legend "actions.runner.*" | cut -d" " -f1); do
+  sudo mkdir -p /etc/systemd/system/$u.d && printf "[Service]\nOOMPolicy=continue\nRestart=on-failure\n" | sudo tee /etc/systemd/system/$u.d/oom.conf >/dev/null
+done; sudo systemctl daemon-reload'
+```
+
+The action caps each session's container at three quarters of the host's memory, so a run that outgrows it loses a Chromium tab inside it rather than its job; two runs at once can still exhaust the host between them, which is what the drop-in survives.
+
 The runners appear under Settings → Actions → Runners. Make the `ghcr.io/qrafttech/agent` package public after the first push, or `docker login ghcr.io` on the host.
 
 ## 3. What only hands can do

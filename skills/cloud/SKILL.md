@@ -23,9 +23,10 @@ A dirty tree is a stop, not a question: the run works on the branch as pushed, a
 One ssh round trip, the same `docker run` as README §3.1 (`vps`: the ssh alias for the host, README §1):
 
 ```sh
-ssh agent@vps 'docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent sh -c "claude auth status; claude agents --json --all"'
+ssh agent@vps "systemctl list-units --all --plain --no-legend 'actions.runner.*-$repo.*' | cut -d' ' -f1,3; docker run --rm -v /opt/agent/home:/home/agent ghcr.io/qrafttech/agent sh -c 'claude auth status; claude agents --json --all'"
 ```
 
+- No runner of this repository `active` → stop: `the runner is down; restart it: ssh agent@vps sudo systemctl restart <unit>`. A dispatch now would queue until the 24-hour expiry. A runner is down after the host ran out of memory (§7), and nothing restarts it.
 - No `"loggedIn": true` → stop: `the host is not logged in; log in first, README §3.1`.
 - Filter the listing on `name == "<repo>/<current>"` and print what is there, newest first: id, state, started (as an age). A session whose run is in progress right now shows `failed` from here (its process is in the job's container, out of this listing's sight) — check `gh run list --workflow cloud --branch <current>` before reading `failed` as dead; the same branch queues behind itself anyway. This is what the run will resume — on `main` there is never one, the run gets its own branch (§5).
 
@@ -66,7 +67,7 @@ until [ "$(gh run view "$run" --json status -q .status)" = completed ]; do sleep
 
 ## 7. Report
 
-From `gh run view "$run" --log`: the `session <id> …` lines — `resumed from <session id>, running as` or `running as`, then the end (`done`, `idle, working by its own account`, or the error). Then:
+From `gh run view "$run" --log`: the `session <id> …` lines — `resumed from <session id>, running as` or `running as`, then the end (`done`, `idle, working by its own account`, or the error). `exit code 137` beside `The runner has received a shutdown signal` is the host out of memory: the kernel killed the job's `docker` process and systemd stopped the runner with it — `ssh agent@vps 'sudo journalctl -k --since -1d | grep -A1 "invoked oom-killer"'` names what held the memory, and §2 finds the runner down on the next dispatch. The last step still pushed: what the session left is on the branch it had checked out, which may not be `$branch`. Then:
 
 ```sh
 if [ "$branch" = "$current" ]; then git pull --rebase -q origin "$branch"; else git fetch -q origin "$branch"; fi

@@ -34,7 +34,8 @@ runs:
           docker compose -p "$run" -f docker-compose.yml -f "$RUNNER_TEMP/unpublished.yml" up -d --wait
           network="--network ${run}_default"
         fi
-        exec docker run --rm --init --pull always --name "$run" $network \
+        memory=$(awk '/MemTotal/ {print int($2 * 3 / 4)}' /proc/meminfo)k
+        exec docker run --rm --init --pull always --name "$run" $network --memory "$memory" \
           $(jq -r 'del(.PROMPT, .FRESH, .CONFIG, .GH_TOKEN) | keys[] | "-e " + .' <<<"$CONFIG") -e GH_TOKEN \
           -v /opt/agent/home:/home/agent -v "${PWD%/*}:${PWD%/*}" -w "$PWD" ghcr.io/qrafttech/agent session "${GITHUB_REPOSITORY#*/}/$GITHUB_REF_NAME" "$PROMPT" $([ "$FRESH" != true ] || echo fresh)
     - if: always()
