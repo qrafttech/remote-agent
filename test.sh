@@ -15,6 +15,7 @@ if [ "${1:-}" = image ]; then
   check "gh pinned" 'inside "gh --version" | grep -q "^gh version $GH_VERSION "'
   check "gh stack baked, found once the home links the image's extensions" 'inside "mkdir -p ~/.local/share/gh && ln -s /opt/gh/extensions ~/.local/share/gh/extensions && gh stack --version" | grep -q "^gh stack version $GH_STACK_VERSION$"'
   check "git pushes with gh's token" '[ "$(inside "git config credential.helper")" = "!gh auth git-credential" ]'
+  check "psql for the postgres sidecar, no docker exec in the container" 'inside "psql --version" | grep -q "^psql (PostgreSQL) "'
   check "session on the path" 'inside "session 2>&1 || true" | grep -q "^usage: session"'
   check "chromium renders headless without a sandbox" 'inside "chromium --headless --dump-dom about:blank" | grep -q "<html"'
   check "runs as uid 1000, the runner user of the host" '[ "$(inside "id -u")" = 1000 ]'

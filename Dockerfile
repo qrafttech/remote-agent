@@ -7,7 +7,7 @@ ARG GH_STACK_VERSION=0.1.1
 ARG AGENT_UID=1000
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      git curl ca-certificates rsync procps chromium fonts-liberation \
+      git curl ca-certificates rsync procps chromium fonts-liberation postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 RUN corepack disable \
  && npm install -g "pnpm@$PNPM_VERSION" "chrome-devtools-mcp@$DEVTOOLS_MCP_VERSION"
