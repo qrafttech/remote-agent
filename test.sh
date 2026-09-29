@@ -20,6 +20,7 @@ if [ "${1:-}" = image ]; then
   check "psql for the postgres sidecar, no docker exec in the container" 'inside "psql --version" | grep -q "^psql (PostgreSQL) "'
   check "session on the path" 'inside "session 2>&1 || true" | grep -q "^usage: session"'
   check "chromium renders headless without a sandbox" 'inside "chromium --headless --dump-dom about:blank" | grep -q "<html"'
+  check "python3 makes a venv with pip in it" 'inside "python3 -m venv /tmp/v && /tmp/v/bin/pip --version" | grep -q "^pip "'
   check "runs as uid 1000, the runner user of the host" '[ "$(inside "id -u")" = 1000 ]'
   check "git identity and ignore baked in" '[ "$(inside "git config user.name")" = agent ] && [ -z "$(inside "cd \$(mktemp -d) && git init -q . && touch a.log && git status --porcelain")" ]'
   check "autoupdater off" '[ "$(inside "echo \$DISABLE_AUTOUPDATER")" = 1 ]'
