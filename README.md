@@ -8,7 +8,7 @@ The trigger is anything with `gh`. The session is a plain process on the checked
 
 | File | Does |
 | :- | :- |
-| `Dockerfile` | the image: Node, pnpm, Chromium, the latest Claude Code, MCP, `gh` and `gh stack`, `session` |
+| `Dockerfile` | the image: Node, pnpm, Chromium, Python with venv, the latest Claude Code, MCP, `gh` and `gh stack`, `session` |
 | `session` | the run's one step in the container: adapt the setup, resume the branch's session or launch `claude --bg`, poll until it ends |
 | `action.yml` | the composite action a project's workflow uses: sidecars up, the session's container, then teardown, commit, push, draft pull request |
 | `workflow.yml` | the template a project copies to `.github/workflows/cloud.yml`: its `env:`, a checkout, `uses: qrafttech/remote-agent@main` |
